@@ -1,0 +1,12 @@
+site_name: Cowboy
+site_description: Install, generate, and update AI coding agent skills.
+theme:
+  name: mkdocs
+nav:
+  - Overview: index.md
+  - Commands: commands.md
+  - Generation: generation.md
+  - Architecture: architecture.md
+markdown_extensions:
+  - tables
+  - fenced_code
