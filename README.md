@@ -1,22 +1,32 @@
-<p align="center">
-  <img src="./assets/cowboys.png" alt="Cowboy cover art" width="100%" />
+<p align="center" style="margin: 0 0 8px 0;">
+  <img src="./assets/cowboys.png" alt="Cowboy cover art" width="92%" />
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/title_dark.png" />
-    <source media="(prefers-color-scheme: light)" srcset="./assets/title_light.png" />
-    <img src="./assets/title_light.png" alt="Cowboy" width="520" />
-  </picture>
+<h1 align="center" style="margin: 0; font-size: 4rem; line-height: 1;">🤠 cowboy</h1>
+
+<p align="center" style="margin: 8px 0 0 0;"><strong>The package manager for AI agent skills.</strong></p>
+
+<p align="center" style="margin: 8px 0 0 0;">
+Cowboy helps you create, install, and update AI agent skills with simple commands.
 </p>
 
-<p align="center">
-<strong>The package manager for AI agent skills.</strong>
+<p align="center" style="margin: 8px 0 0 0;">
+  <a href="./docs/index.md"><strong>Documentation</strong></a> · <strong>MIT License</strong>
 </p>
 
-<p align="center">
-Cowboy turns reusable AI agent instructions into portable, versioned, auto-updating skill packages that work across Claude Code and Codex.
-</p>
+---
+
+## Quick Index
+
+* [Why Cowboy](#why-cowboy)
+* [What Makes Cowboy Different](#what-makes-cowboy-different)
+* [Features](#features)
+* [Installation](#installation)
+* [Quick Start](#quick-start)
+* [Core Workflows](#core-workflows)
+* [How Cowboy Works](#how-cowboy-works)
+* [Documentation](#documentation)
+* [License](#license)
 
 ---
 

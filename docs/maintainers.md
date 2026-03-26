@@ -40,6 +40,29 @@ Before a release:
 3. Run `pnpm test` and `pnpm build`
 4. Tag the release in GitHub and publish release notes
 
+## Documentation site
+
+The documentation site is built from `docs/` with MkDocs using
+`mkdocs.yml`.
+
+GitHub Pages deployment is handled by the `Docs` workflow in
+`.github/workflows/docs.yml`.
+
+Repository setup:
+
+1. Open `Settings -> Pages`
+2. Set `Source` to `GitHub Actions`
+3. Push to `main` or run the `Docs` workflow manually
+
+Local preview:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-docs.txt
+mkdocs serve
+```
+
 ## Security operations
 
 - Keep GitHub Private Vulnerability Reporting enabled if available

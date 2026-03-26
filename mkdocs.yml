@@ -1,5 +1,8 @@
 site_name: Cowboy
 site_description: Install, generate, and update AI coding agent skills.
+repo_url: https://github.com/oneprompteu/cowboy
+docs_dir: docs
+site_dir: site
 theme:
   name: mkdocs
 nav:
