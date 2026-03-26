@@ -3,6 +3,8 @@ import { access, mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promise
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  createDocsGenerationSessionPrompt,
+  createDocsUpdateSessionPrompt,
   createRepoGenerationSessionPrompt,
   createRepoUpdateSessionPrompt,
   createMultiRepoGenerationSessionPrompt,
@@ -117,7 +119,7 @@ describe("resolveGeneratedSkill", () => {
 });
 
 describe("ensureGeneratedSkillSource", () => {
-  it("bootstraps canonical source from an installed Codex skill and strips openai.yaml", async () => {
+  it("bootstraps canonical source from an installed Codex skill and preserves openai.yaml", async () => {
     const installedDir = join(tempDir, ".agents", "skills", "dbt");
     await writeSkill(installedDir, "dbt", "dbt workflow");
     await mkdir(join(installedDir, "agents"), { recursive: true });
@@ -161,7 +163,8 @@ describe("ensureGeneratedSkillSource", () => {
 
     expect(await readFile(canonicalSkillPath, "utf-8")).toContain("name: dbt");
     expect(await readFile(scriptPath, "utf-8")).toContain("echo dbt");
-    expect(await exists(openaiYamlPath)).toBe(false);
+    expect(await exists(openaiYamlPath)).toBe(true);
+    expect(await readFile(openaiYamlPath, "utf-8")).toContain("display_name: dbt");
 
     const skills = await scanGeneratedSkills(tempDir);
     expect(skills).toHaveLength(1);
@@ -170,12 +173,15 @@ describe("ensureGeneratedSkillSource", () => {
 });
 
 describe("generation prompts", () => {
-  it("builds a repo prompt that points the agent at .cowboy/skills", () => {
-    const prompt = createRepoGenerationSessionPrompt(".cowboy/.tmp/playwright", "playwright");
+  it("builds a repo prompt that points the agent at skills/", () => {
+    const prompt = createRepoGenerationSessionPrompt("repos/playwright", "playwright");
 
-    expect(prompt).toContain(".cowboy/skills/playwright/");
-    expect(prompt).toContain(".cowboy/.tmp/playwright");
+    expect(prompt).toContain("skills/playwright/");
+    expect(prompt).toContain("repos/playwright");
     expect(prompt).toContain("skill-creator");
+    expect(prompt).toContain("self-contained skill package");
+    expect(prompt).toContain("Do not model it on other skills in the workspace");
+    expect(prompt).toContain("Keep SKILL.md focused on orientation and task routing");
   });
 
   it("builds a repo update prompt including diff summary when provided", () => {
@@ -201,6 +207,8 @@ describe("generation prompts", () => {
     expect(prompt).toContain("Identify the canonical project");
     expect(prompt).toContain("Prefer official documentation");
     expect(prompt).toContain("Use the installed skill-creator skill as guide.");
+    expect(prompt).toContain("portable self-contained skill package");
+    expect(prompt).toContain("Choose the package structure freely");
   });
 
   it("topic prompt instructs the agent to write sources.yaml", () => {
@@ -213,27 +221,28 @@ describe("generation prompts", () => {
   it("builds a multi-repo prompt listing all repos", () => {
     const prompt = createMultiRepoGenerationSessionPrompt(
       [
-        { repoUrl: "https://github.com/scikit-learn/scikit-learn", relPath: ".cowboy/.tmp/scikit-learn" },
-        { repoUrl: "https://github.com/matplotlib/matplotlib", relPath: ".cowboy/.tmp/matplotlib" },
+        { repoUrl: "https://github.com/scikit-learn/scikit-learn", relPath: "repos/scikit-learn" },
+        { repoUrl: "https://github.com/matplotlib/matplotlib", relPath: "repos/matplotlib" },
       ],
       "data-analyst",
     );
 
     expect(prompt).toContain("scikit-learn");
     expect(prompt).toContain("matplotlib");
-    expect(prompt).toContain(".cowboy/.tmp/scikit-learn");
-    expect(prompt).toContain(".cowboy/.tmp/matplotlib");
+    expect(prompt).toContain("repos/scikit-learn");
+    expect(prompt).toContain("repos/matplotlib");
     expect(prompt).toContain("data-analyst");
-    expect(prompt).toContain("unified skill");
+    expect(prompt).toContain("unified self-contained skill package");
+    expect(prompt).toContain("Do not model it on other skills in the workspace");
   });
 
   it("multi-repo prompt delegates to single-repo prompt when only one repo", () => {
     const prompt = createMultiRepoGenerationSessionPrompt(
-      [{ repoUrl: "https://github.com/test/lib", relPath: ".cowboy/.tmp/lib" }],
+      [{ repoUrl: "https://github.com/test/lib", relPath: "repos/lib" }],
       "test-skill",
     );
 
-    expect(prompt).toContain(".cowboy/.tmp/lib");
+    expect(prompt).toContain("repos/lib");
     expect(prompt).not.toContain("unified skill");
   });
 
@@ -268,6 +277,102 @@ describe("generation prompts", () => {
     expect(prompt).toContain('Update the skill "test-skill"');
     expect(prompt).toContain("1 commit(s) since aaa1111");
     expect(prompt).not.toContain("multiple source repositories");
+  });
+});
+
+describe("docs prompts", () => {
+  it("repo prompt includes doc URLs when provided", () => {
+    const prompt = createRepoGenerationSessionPrompt(
+      "repos/langchain",
+      "langchain",
+      ["https://docs.langchain.com"],
+    );
+
+    expect(prompt).toContain("repos/langchain");
+    expect(prompt).toContain("https://docs.langchain.com");
+    expect(prompt).toContain("web browsing tools");
+  });
+
+  it("multi-repo prompt includes doc URLs when provided", () => {
+    const prompt = createMultiRepoGenerationSessionPrompt(
+      [
+        { repoUrl: "https://github.com/scikit-learn/scikit-learn", relPath: "repos/scikit-learn" },
+        { repoUrl: "https://github.com/matplotlib/matplotlib", relPath: "repos/matplotlib" },
+      ],
+      "data-analyst",
+      ["https://scikit-learn.org/stable/"],
+    );
+
+    expect(prompt).toContain("scikit-learn");
+    expect(prompt).toContain("https://scikit-learn.org/stable/");
+    expect(prompt).toContain("web browsing tools");
+  });
+
+  it("topic prompt includes doc URLs when provided", () => {
+    const prompt = createTopicGenerationSessionPrompt(
+      "langchain",
+      undefined,
+      ["https://docs.langchain.com"],
+    );
+
+    expect(prompt).toContain("langchain");
+    expect(prompt).toContain("https://docs.langchain.com");
+    expect(prompt).toContain("web browsing tools");
+  });
+
+  it("builds a docs-only generation prompt", () => {
+    const prompt = createDocsGenerationSessionPrompt(
+      ["https://docs.langchain.com", "https://python.langchain.com/docs/"],
+      "langchain",
+    );
+
+    expect(prompt).toContain("https://docs.langchain.com");
+    expect(prompt).toContain("https://python.langchain.com/docs/");
+    expect(prompt).toContain("web browsing tools");
+    expect(prompt).toContain("langchain");
+    expect(prompt).toContain("sources.yaml");
+  });
+
+  it("builds a docs update prompt", () => {
+    const prompt = createDocsUpdateSessionPrompt("langchain", [
+      "https://docs.langchain.com",
+    ]);
+
+    expect(prompt).toContain('Update the skill "langchain"');
+    expect(prompt).toContain("https://docs.langchain.com");
+    expect(prompt).toContain("web browsing tools");
+  });
+
+  it("repo update prompt includes doc URLs when provided", () => {
+    const prompt = createRepoUpdateSessionPrompt(
+      "langchain",
+      ".cowboy/.tmp/langchain",
+      "2 commit(s) since abc1234",
+      ["https://docs.langchain.com"],
+    );
+
+    expect(prompt).toContain("2 commit(s) since abc1234");
+    expect(prompt).toContain("https://docs.langchain.com");
+  });
+
+  it("multi-source update prompt includes doc URLs when provided", () => {
+    const prompt = createMultiSourceUpdateSessionPrompt(
+      "data-analyst",
+      [
+        { repoUrl: "https://github.com/scikit-learn/scikit-learn", relPath: ".cowboy/.tmp/scikit-learn" },
+      ],
+      ["https://scikit-learn.org/stable/"],
+    );
+
+    expect(prompt).toContain("https://scikit-learn.org/stable/");
+    expect(prompt).toContain("web browsing tools");
+  });
+
+  it("prompts omit docs section when no doc URLs provided", () => {
+    const prompt = createRepoGenerationSessionPrompt("repos/lib", "test");
+
+    expect(prompt).not.toContain("web browsing tools");
+    expect(prompt).not.toContain("documentation websites");
   });
 });
 

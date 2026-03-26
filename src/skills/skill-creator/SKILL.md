@@ -5,149 +5,194 @@ description: "Guide for creating effective AI agent skills. Use when the user wa
 
 # Skill Creator
 
-Guide for creating effective skills that work across AI coding agents (Claude Code, Codex, etc.).
+Guide for creating effective skills that work across AI coding agents such as Claude Code and Codex.
 
-## What is a Skill
+## What A Skill Is
 
-A skill is a self-contained package that extends an AI agent's capabilities with specialized knowledge, workflows, and tools. Skills transform a general-purpose agent into a specialist equipped with procedural knowledge that no model can fully possess.
+A skill is a self-contained package that gives an agent reusable procedural knowledge, domain context, and optional resources that improve execution on a narrow class of tasks.
 
-Skills provide:
+A skill can be as small as a single `SKILL.md` file or as broad as a package with references, examples, scripts, and assets. Choose the smallest package that still lets the agent perform the work well.
 
-1. **Specialized workflows** — Multi-step procedures for specific domains
-2. **Tool integrations** — Instructions for working with specific file formats or APIs
-3. **Domain expertise** — Company-specific knowledge, schemas, business logic
-4. **Bundled resources** — Scripts, references, and assets for complex and repetitive tasks
+## Skill Package Model
 
-## Skill Structure
+Think in layers:
 
-Every skill has a required `SKILL.md` file and optional bundled resources:
+1. `SKILL.md` is the operational router.
+2. `references/` stores long-form knowledge that would otherwise bloat `SKILL.md`.
+3. `scripts/` stores deterministic, reusable operations.
+4. `assets/` stores files used in outputs.
 
-```
-skill-name/
-├── SKILL.md              (required — metadata + instructions)
-├── scripts/              (optional — executable code)
-│   ├── extract.py
-│   └── validate.sh
-├── references/           (optional — documentation loaded into context as needed)
-│   ├── api-docs.md
-│   └── schema.md
-└── assets/               (optional — files used in output, not loaded into context)
-    ├── template.html
-    └── logo.png
-```
+Do not try to force all knowledge into `SKILL.md`. The skill should be self-contained as a package, not as a single file.
+When one agent benefits from extra metadata or helper files, keep the core skill portable and add the agent-specific files only if they materially improve that runtime.
 
-### SKILL.md (required)
+## Structure Is Flexible
 
-The main file. Has two parts:
+Use whatever structure the task needs. Do not force a fixed taxonomy of files.
 
-**1. YAML frontmatter** — `name` and `description` are required. The description determines when the agent activates the skill, so be specific about what it does and when to use it.
+Examples:
 
-```yaml
----
-name: my-skill
-description: "Clear description of what this skill does and when to use it"
----
-```
+- A simple workflow skill may only need `SKILL.md`.
+- A library skill may need `SKILL.md` plus several files under `references/`.
+- A document-processing skill may need `SKILL.md`, deep references, and executable scripts.
 
-**2. Markdown body** — Practical guidance for the AI agent. Write in imperative/infinitive form (verb-first instructions). Focus on non-obvious information that the agent would not know from its training.
+Create only the files that materially improve the skill.
 
-### Scripts (`scripts/`)
+## What `SKILL.md` Should Do
 
-Executable code (Python, Bash, Node, etc.) for tasks that require deterministic reliability or are rewritten repeatedly.
+Keep `SKILL.md` focused on orientation and execution:
 
-- Include when the same code would be rewritten on every invocation
-- Example: `scripts/rotate_pdf.py` for PDF rotation, `scripts/validate.sh` for linting
-- Benefits: token-efficient, deterministic, can be executed without loading into context
-- Scripts may still need to be read by the agent for patching or environment adjustments
+- state when the skill should be used
+- define the main task categories or decision points
+- tell the agent what file or resource to open first for each kind of task
+- capture the highest-signal pitfalls, invariants, and usage rules
+- reference all bundled `references/`, `scripts/`, and `assets/` explicitly
 
-### References (`references/`)
+Do not turn `SKILL.md` into a full documentation dump unless the domain is simple enough that one file is genuinely sufficient.
 
-Documentation loaded into context as needed to inform the agent's process.
+## When To Create A Broad Package
 
-- Include for documentation the agent should reference while working
-- Examples: database schemas, API docs, domain knowledge, company policies
-- Benefits: keeps SKILL.md lean, loaded only when the agent determines it's needed
-- For large files (>10k words), include grep search patterns in SKILL.md so the agent can find relevant sections
-- Avoid duplication: information should live in either SKILL.md or references, not both
+For library, framework, SDK, or protocol skills, default toward broad package coverage when the domain is large enough that a thin `SKILL.md` would leave the agent under-informed.
 
-### Assets (`assets/`)
+The goal is not to mirror documentation verbatim. The goal is to preserve most of the useful knowledge while compressing it intelligently for agent execution.
 
-Files used in output, not loaded into context.
+For broad library skills, include enough information for the agent to:
 
-- Include when the skill needs files for the final output
-- Examples: templates, images, icons, fonts, boilerplate code
-- Benefits: separates output resources from documentation
+- understand the core concepts and mental model
+- find the right APIs, files, or modules quickly
+- follow the common setup and configuration paths
+- copy proven usage patterns and examples
+- avoid the important failure modes and gotchas
+- know where to verify version-sensitive details
 
-## Creating a Skill
+Reduce repetition, tutorial filler, marketing prose, and human-oriented exposition that does not improve agent performance.
 
-### Step 1: Define Concrete Use Cases
-
-Understand exactly how the skill will be used. Ask:
-
-- What tasks should this skill support?
-- What would a user say that should trigger this skill?
-- What does the agent need to know that it doesn't already?
-
-When the starting point is a free-text topic rather than a specific repository, first identify the canonical project, package, framework, or specification before writing the skill.
-
-### Research Standard
+## Research Standard
 
 Base the skill on primary sources whenever possible.
 
 Prioritize sources in this order:
 
-1. Official documentation sites
+1. Official documentation
 2. Maintainer-owned repositories and examples
-3. Package registries or official SDK references
+3. Official package registries or SDK references
 4. Primary specifications or standards
-5. High-quality third-party tutorials only when official material leaves gaps
+5. High-quality third-party material only when the primary sources leave gaps
 
-Avoid building the skill from random blog posts, forum threads, or SEO summaries when official documentation exists.
+When starting from a free-text topic, first identify the canonical project, package, framework, or specification before writing the skill.
 
-If external research materially informs the skill, include a concise bibliography in `references/sources.md` with the official links or source names the agent should trust first.
+If external research materially informs the skill, include a concise bibliography in `references/sources.md`.
 
-### Step 2: Plan Reusable Resources
+## Designing The Package
 
-For each use case, identify what scripts, references, and assets would help:
+Start from concrete user tasks and trigger phrases.
 
-- Code that gets rewritten every time → `scripts/`
-- Documentation the agent needs to reference → `references/`
-- Files used in output → `assets/`
+Ask:
 
-### Step 3: Create the Skill Directory
+- What tasks should this skill support?
+- What would a user say that should trigger it?
+- What does the agent need here that a general model would not reliably know?
+- What knowledge is short and operational enough for `SKILL.md`?
+- What knowledge belongs in companion files because it is long, detailed, or only needed in specific branches?
 
-```
-mkdir -p skill-name/{scripts,references,assets}
-```
+Then design the package around those needs.
 
-Create `SKILL.md` with frontmatter and instructions. Delete any empty subdirectories not needed.
+## `references/`
 
-### Step 4: Write SKILL.md
+Use `references/` for long-form knowledge that improves quality but should not live in the main skill body.
 
-The body should answer:
+Good candidates:
 
-1. What is the purpose of the skill?
-2. When should it be used?
-3. How should the agent use it? Reference all bundled resources so the agent knows they exist.
+- source maps
+- architecture maps
+- API or module summaries
+- patterns and example walkthroughs
+- configuration guides
+- gotchas and failure modes
+- official-source bibliographies
+- condensed documentation extracted from official docs
 
-**Writing guidelines:**
-- Use imperative/infinitive form ("To accomplish X, do Y"), not second person
-- Focus on non-obvious procedural knowledge
-- Include code examples where they clarify usage
-- Keep SKILL.md lean — move detailed reference material to `references/`
-- Prefer guidance that is stable across versions; if the skill depends on version-specific behavior, note where to verify it in the official sources
+Keep these files dense and navigable. Prefer compressed, high-signal summaries over verbatim copies. Include headings, search-friendly terms, and file or symbol names when that helps the agent jump quickly to the right place.
 
-### Step 5: Test and Iterate
+## `scripts/`
 
-1. Use the skill on real tasks
-2. Notice struggles or inefficiencies
-3. Update SKILL.md or bundled resources
-4. Test again
+Use scripts only when they add real deterministic value.
 
-## Context Loading Strategy
+Good candidates:
 
-Skills use progressive disclosure to manage context efficiently:
+- file conversion
+- validation
+- extraction
+- repetitive transformations
+- setup or inspection helpers the agent would otherwise rewrite repeatedly
 
-1. **Metadata** (name + description) — Always in context (~100 words)
-2. **SKILL.md body** — When skill triggers (<5k words ideal)
-3. **Bundled resources** — Loaded as needed by the agent (unlimited, since scripts can be executed without reading)
+Do not create placeholder scripts, sample scripts, or decorative scripts. If the agent can write the code directly as part of the task and there is no reuse or determinism benefit, omit `scripts/`.
+
+## `assets/`
+
+Use `assets/` for files that are meant to be copied, filled, or transformed in the final output.
+
+Examples:
+
+- templates
+- starter projects
+- images
+- icons
+- fonts
+- sample documents
+
+## Writing Process
+
+### Step 1: Understand Use Cases
+
+Identify concrete tasks, trigger phrases, and success criteria.
+
+### Step 2: Research Canonical Sources
+
+Read the official docs, maintainer examples, relevant source files, and other primary material.
+
+### Step 3: Decide Package Depth
+
+Choose between:
+
+- a single-file skill when the domain is small
+- a broad package when the domain needs substantial supporting knowledge
+
+### Step 4: Allocate Knowledge
+
+Put short operational guidance in `SKILL.md`.
+Put long or branch-specific knowledge in `references/`.
+Add `scripts/` only where they provide deterministic leverage.
+
+### Step 5: Write The Skill
+
+Write in imperative or infinitive form. Focus on non-obvious procedural knowledge and decision support.
+
+### Step 6: Trim And Densify
+
+Remove repetition, low-value prose, placeholders, and empty folders. Keep the useful knowledge; compress the rest.
+
+### Step 7: Test And Iterate
+
+Use the skill on a realistic task, observe where the agent still struggles, and update the package accordingly.
+
+## Quality Checks
+
+Before considering the skill done, verify that:
+
+- the directory name matches the frontmatter `name`
+- the description is specific enough to trigger in the right situations
+- `SKILL.md` routes the agent effectively
+- the package contains the right supporting knowledge for the domain
+- companion files are useful and non-redundant
+- scripts are deterministic and reusable, not placeholders
+- the overall package is broad enough to help but dense enough to stay efficient
+
+## Context Strategy
+
+Use progressive disclosure:
+
+1. metadata is always visible
+2. `SKILL.md` loads when the skill triggers
+3. companion files should be opened only when needed
+
+Design the package so the agent can solve common tasks from `SKILL.md` plus a small number of targeted companion reads, not by re-reading the whole package every time.

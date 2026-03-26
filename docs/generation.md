@@ -24,10 +24,10 @@ Flow:
 
 1. Cowboy clones the target repo
 2. Cowboy resolves which configured agent should handle generation
-3. Cowboy opens a real Claude/Codex session in the current project
+3. Cowboy opens a real Claude/Codex session in an isolated temporary workspace
 4. The cloned repo is exposed to the agent as reference material
-5. The agent writes the skill to `.cowboy/skills/<name>/`
-6. Cowboy installs that skill for the chosen agent
+5. The agent writes the skill to `.cowboy/skills/<name>/` inside that isolated workspace
+6. Cowboy syncs the canonical skill back to the real project and installs it for all configured agents
 
 ## Topic-based generation
 
@@ -39,12 +39,12 @@ cowboy generate langchain
 
 Flow:
 
-1. Cowboy opens a real Claude/Codex session in the current project
+1. Cowboy opens a real Claude/Codex session in an isolated temporary workspace
 2. Cowboy resolves which configured agent should handle generation
 3. The agent identifies the canonical project, package, framework, or specification behind the topic
 4. When external research is needed, the agent prefers official documentation, maintainer repositories, package indexes, and other primary sources
-5. The agent writes the skill to `.cowboy/skills/<name>/`
-6. Cowboy installs that skill for the chosen agent
+5. The agent writes the skill to `.cowboy/skills/<name>/` inside that isolated workspace
+6. Cowboy syncs the canonical skill back to the real project and installs it for all configured agents
 
 ## Skill-creator expectations
 

@@ -1,17 +1,19 @@
-import { rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   AgentType,
   ScannedSkill,
   ImportedSkill,
   GeneratedSkill,
+  InstalledSkill,
   SkillSource,
 } from "./schemas.js";
 import type { AgentAdapter, InstallResult } from "./adapters/base.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { CodexAdapter } from "./adapters/codex.js";
 import { addSkill, removeSkill, findSkill } from "./tracker.js";
+import { scanDirectory } from "./scanner.js";
 
 const adapters: Record<AgentType, AgentAdapter> = {
   claude: new ClaudeCodeAdapter(),
@@ -49,6 +51,9 @@ export async function installSkill(
     results.push(result);
   }
 
+  // Write canonical copy for enable/disable support
+  await writeCanonicalCopy(skill, projectDir);
+
   const installed: ImportedSkill = {
     name: skill.name,
     type: "imported",
@@ -57,6 +62,7 @@ export async function installSkill(
     content_hash: hashSkill(skill),
     installed_at: new Date().toISOString().split("T")[0],
     installed_for: agents,
+    disabled_for: [],
   };
 
   await addSkill(projectDir, installed);
@@ -100,6 +106,8 @@ export interface GeneratedInstallOptions {
   agents: AgentType[];
   /** Source repositories with their commit hashes */
   sources?: SkillSource[];
+  /** Documentation website URLs used as sources */
+  docUrls?: string[];
   /** The free-text topic/query this skill was generated from */
   researchQuery?: string;
   /** Preserve original installation date when updating an existing skill */
@@ -120,14 +128,15 @@ export async function installGeneratedSkill(
     projectDir,
     agents,
     sources,
+    docUrls,
     researchQuery,
     installedAt,
     lastUpdated,
   } = options;
   const results: InstallResult[] = [];
 
-  if ((!sources || sources.length === 0) && !researchQuery) {
-    throw new Error("Generated skills require sources or researchQuery.");
+  if ((!sources || sources.length === 0) && (!docUrls || docUrls.length === 0) && !researchQuery) {
+    throw new Error("Generated skills require sources, docUrls, or researchQuery.");
   }
 
   for (const agentType of agents) {
@@ -136,19 +145,137 @@ export async function installGeneratedSkill(
     results.push(result);
   }
 
+  // Write canonical copy for enable/disable support
+  await writeCanonicalCopy(skill, projectDir);
+
   const today = new Date().toISOString().split("T")[0];
   const installed: GeneratedSkill = {
     name: skill.name,
     type: "generated",
     sources: sources && sources.length > 0 ? sources : undefined,
+    doc_urls: docUrls && docUrls.length > 0 ? docUrls : undefined,
     research_query: researchQuery,
     installed_at: installedAt ?? today,
     last_updated: lastUpdated ?? today,
     installed_for: agents,
+    disabled_for: [],
   };
 
   await addSkill(projectDir, installed);
   return results;
+}
+
+/**
+ * Disable a skill for specific agents (or all).
+ * Removes files from agent directories and updates the registry.
+ */
+export async function disableSkill(
+  skillName: string,
+  projectDir: string,
+  agent?: AgentType,
+): Promise<InstalledSkill | null> {
+  const skill = await findSkill(projectDir, skillName);
+  if (!skill) return null;
+
+  const toDisable = agent
+    ? [agent]
+    : skill.installed_for;
+
+  for (const a of toDisable) {
+    if (!skill.installed_for.includes(a)) continue;
+    if (skill.disabled_for.includes(a)) continue;
+    await adapters[a].remove(skillName, projectDir);
+  }
+
+  const alreadyDisabled = new Set(skill.disabled_for);
+  for (const a of toDisable) {
+    if (skill.installed_for.includes(a)) {
+      alreadyDisabled.add(a);
+    }
+  }
+
+  const updated: InstalledSkill = {
+    ...skill,
+    disabled_for: [...alreadyDisabled],
+  };
+  await addSkill(projectDir, updated);
+  return updated;
+}
+
+/**
+ * Enable a skill for specific agents (or all).
+ * Re-installs files from the canonical copy and updates the registry.
+ */
+export async function enableSkill(
+  skillName: string,
+  projectDir: string,
+  agent?: AgentType,
+): Promise<InstalledSkill | null> {
+  const skill = await findSkill(projectDir, skillName);
+  if (!skill) return null;
+
+  const toEnable = agent
+    ? [agent]
+    : [...skill.disabled_for];
+
+  if (toEnable.length === 0) return skill;
+
+  const canonical = await loadCanonicalCopy(skillName, projectDir);
+  if (!canonical) {
+    throw new Error(
+      `Cannot enable "${skillName}": canonical copy not found in .cowboy/skills/${skillName}/.`,
+    );
+  }
+
+  for (const a of toEnable) {
+    if (!skill.installed_for.includes(a)) continue;
+    if (!skill.disabled_for.includes(a)) continue;
+    await adapters[a].install(canonical, projectDir);
+  }
+
+  const stillDisabled = skill.disabled_for.filter(
+    (a) => !toEnable.includes(a),
+  );
+
+  const updated: InstalledSkill = {
+    ...skill,
+    disabled_for: stillDisabled,
+  };
+  await addSkill(projectDir, updated);
+  return updated;
+}
+
+// --- Private helpers ---
+
+const CANONICAL_DIR = join(".cowboy", "skills");
+
+async function writeCanonicalCopy(
+  skill: ScannedSkill,
+  projectDir: string,
+): Promise<void> {
+  const skillDir = join(projectDir, CANONICAL_DIR, skill.name);
+  await rm(skillDir, { recursive: true, force: true });
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(join(skillDir, "SKILL.md"), skill.rawContent, "utf-8");
+
+  for (const file of skill.files ?? []) {
+    const filePath = join(skillDir, file.relativePath);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, file.content);
+  }
+}
+
+async function loadCanonicalCopy(
+  skillName: string,
+  projectDir: string,
+): Promise<ScannedSkill | null> {
+  const skillDir = join(projectDir, CANONICAL_DIR, skillName);
+  try {
+    const skills = await scanDirectory(skillDir);
+    return skills[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -9,7 +9,7 @@ import { stringify as yamlStringify } from "yaml";
 
 import { scanRepo } from "../core/scanner.js";
 import { detectAgentTypes } from "../core/detector.js";
-import { installSkill, installGeneratedSkill, uninstallSkill } from "../core/installer.js";
+import { installSkill, installGeneratedSkill, uninstallSkill, enableSkill, disableSkill } from "../core/installer.js";
 import { findSkill, readRegistry } from "../core/tracker.js";
 import { generateSkill } from "../core/generator.js";
 import { updateSkills } from "../core/updater.js";
@@ -177,7 +177,10 @@ program
     }
 
     for (const skill of registry.skills) {
-      const agents = skill.installed_for.map((a) => chalk.cyan(a)).join(", ");
+      const disabledSet = new Set(skill.disabled_for);
+      const agents = skill.installed_for
+        .map((a) => disabledSet.has(a) ? chalk.dim(`${a} (off)`) : chalk.cyan(a))
+        .join(", ");
       let type: string;
       if (skill.type === "imported" && skill.source_repo === "builtin") {
         type = chalk.green("builtin");
@@ -202,6 +205,9 @@ program
         } else {
           console.log(`    ${chalk.dim("generated")}`);
         }
+        if (skill.doc_urls?.length) {
+          console.log(`    ${chalk.dim(`docs: ${skill.doc_urls.join(", ")}`)}`);
+        }
       }
     }
 
@@ -222,6 +228,49 @@ program
     } else {
       console.log(chalk.yellow(`Skill "${name}" not found.`));
     }
+  });
+
+// --- cowboy enable <name> ---
+
+program
+  .command("enable <name>")
+  .description("Enable a disabled skill")
+  .option("--agent <type>", "Enable only for a specific agent (claude or codex)")
+  .action(async (name: string, opts: { agent?: string }) => {
+    const projectDir = process.cwd();
+    const agent = opts.agent as AgentType | undefined;
+
+    try {
+      const result = await enableSkill(name, projectDir, agent);
+      if (!result) {
+        console.log(chalk.yellow(`Skill "${name}" not found.`));
+        return;
+      }
+      const target = agent ?? "all agents";
+      console.log(`${chalk.green("✓")} Enabled ${chalk.bold(name)} for ${target}`);
+    } catch (error: any) {
+      console.error(chalk.red(error.message));
+      process.exitCode = 1;
+    }
+  });
+
+// --- cowboy disable <name> ---
+
+program
+  .command("disable <name>")
+  .description("Disable a skill without removing it")
+  .option("--agent <type>", "Disable only for a specific agent (claude or codex)")
+  .action(async (name: string, opts: { agent?: string }) => {
+    const projectDir = process.cwd();
+    const agent = opts.agent as AgentType | undefined;
+
+    const result = await disableSkill(name, projectDir, agent);
+    if (!result) {
+      console.log(chalk.yellow(`Skill "${name}" not found.`));
+      return;
+    }
+    const target = agent ?? "all agents";
+    console.log(`${chalk.green("✓")} Disabled ${chalk.bold(name)} for ${target}`);
   });
 
 // --- cowboy agents ---
@@ -251,21 +300,23 @@ program
   .description("Generate a new skill from library repos or free-text topic using AI")
   .argument("[topic...]", "Free-text topic query, e.g. langchain")
   .option("--repo <url>", "GitHub URL of the library/tool (repeatable)", (val: string, acc: string[]) => [...acc, val], [] as string[])
+  .option("--docs <url>", "Documentation URL (repeatable)", (val: string, acc: string[]) => [...acc, val], [] as string[])
   .option("--name <name>", "Custom name for the skill")
   .option("--agent <agent>", "Agent to use for generation (claude or codex)")
-  .action(async (topicParts: string[] | undefined, opts: { repo: string[]; name?: string; agent?: string }) => {
+  .action(async (topicParts: string[] | undefined, opts: { repo: string[]; docs: string[]; name?: string; agent?: string }) => {
     const projectDir = process.cwd();
     const topic = (topicParts ?? []).join(" ").trim() || undefined;
     const repos = opts.repo;
+    const docs = opts.docs;
 
     if (repos.length > 0 && topic) {
       console.log(chalk.yellow("Use either --repo or a free-text topic, not both."));
       return;
     }
 
-    if (repos.length === 0 && !topic) {
+    if (repos.length === 0 && !topic && docs.length === 0) {
       console.log(
-        chalk.yellow("Provide either --repo <url> or a free-text topic such as 'langchain'."),
+        chalk.yellow("Provide --repo <url>, --docs <url>, or a free-text topic such as 'langchain'."),
       );
       return;
     }
@@ -301,30 +352,44 @@ program
       return;
     }
 
-    console.log(
-      chalk.dim(
-        repos.length > 0
-          ? `Using ${aiAgent} to generate skill from ${repos.length} repo(s)...`
-          : `Using ${aiAgent} to generate skill from topic "${topic}"...`,
-      ),
-    );
+    let sourceLabel: string;
+    if (repos.length > 0) {
+      sourceLabel = `${repos.length} repo(s)`;
+    } else if (docs.length > 0 && !topic) {
+      sourceLabel = `${docs.length} doc(s)`;
+    } else {
+      sourceLabel = `topic "${topic}"`;
+    }
+    console.log(chalk.dim(`Using ${aiAgent} to generate skill from ${sourceLabel}...`));
 
     try {
-      const { skill, sources } = await generateSkill({
+      let source: Parameters<typeof generateSkill>[0]["source"];
+      if (repos.length > 0) {
+        source = { type: "repo", libraryRepos: repos, docUrls: docs.length > 0 ? docs : undefined };
+      } else if (topic) {
+        source = { type: "topic", researchQuery: topic, docUrls: docs.length > 0 ? docs : undefined };
+      } else {
+        source = { type: "docs", docUrls: docs };
+      }
+
+      const { skill, sources, docUrls } = await generateSkill({
         projectDir,
         aiAgent,
         skillName: opts.name,
-        source: repos.length > 0
-          ? { type: "repo", libraryRepos: repos }
-          : { type: "topic", researchQuery: topic! },
+        source,
         onProgress: (msg) => console.log(chalk.dim(msg)),
       });
+      const configuredAgents = await getConfiguredAgents(projectDir);
+      const installAgents = configuredAgents.length > 0
+        ? configuredAgents
+        : [aiAgent];
 
       const results = await installGeneratedSkill({
         skill,
         projectDir,
-        agents: [aiAgent],
+        agents: installAgents,
         sources: sources.length > 0 ? sources : undefined,
+        docUrls: docUrls.length > 0 ? docUrls : undefined,
         researchQuery: topic,
       });
 

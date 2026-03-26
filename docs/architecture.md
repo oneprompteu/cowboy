@@ -15,7 +15,8 @@ Cowboy adapts the canonical skill for the configured agent:
 - Codex:
   - `.agents/skills/<name>/SKILL.md`
 
-Cowboy intentionally skips optional Codex metadata files such as `agents/openai.yaml`.
+The canonical package may also include agent-specific companion files when needed. For example, Cowboy preserves optional Codex metadata such as `agents/openai.yaml` in `.cowboy/skills/<name>/`, copies it to `.agents/skills/<name>/`, and omits it from `.claude/skills/<name>/`.
+Cowboy only manages project-local agent directories. User-level Codex skill directories such as `~/.codex/skills` remain outside Cowboy's install surface.
 
 ## Registry
 

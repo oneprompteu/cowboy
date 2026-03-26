@@ -38,6 +38,28 @@ const mockMultiFileSkill: ScannedSkill = {
   ],
 };
 
+const mockSkillWithCodexMetadata: ScannedSkill = {
+  name: "deepagents",
+  description: "Deep Agents library skill",
+  rawContent:
+    '---\nname: deepagents\ndescription: "Deep Agents library skill"\n---\n\n# DeepAgents',
+  body: "# DeepAgents",
+  relativePath: "skills/deepagents/SKILL.md",
+  frontmatter: {
+    name: "deepagents",
+    description: "Deep Agents library skill",
+  },
+  files: [
+    {
+      relativePath: "agents/openai.yaml",
+      content: Buffer.from(
+        "interface:\n  display_name: DeepAgents\n  short_description: Deep Agents library skill\n  default_prompt: Use the deepagents skill\npolicy:\n  allow_implicit_invocation: true\n",
+      ),
+    },
+    { relativePath: "references/patterns.md", content: Buffer.from("# Patterns") },
+  ],
+};
+
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-adapters-"));
 });
@@ -106,6 +128,16 @@ describe("ClaudeCodeAdapter", () => {
 
     expect(result.files.length).toBe(3);
   });
+
+  it("skips Codex-only metadata files", async () => {
+    const result = await adapter.install(mockSkillWithCodexMetadata, tempDir);
+    const skillDir = join(tempDir, ".claude", "skills", "deepagents");
+
+    expect(await exists(join(skillDir, "SKILL.md"))).toBe(true);
+    expect(await exists(join(skillDir, "references", "patterns.md"))).toBe(true);
+    expect(await exists(join(skillDir, "agents", "openai.yaml"))).toBe(false);
+    expect(result.files).toHaveLength(2);
+  });
 });
 
 describe("CodexAdapter", () => {
@@ -130,7 +162,7 @@ describe("CodexAdapter", () => {
     expect(result.skillName).toBe("tdd-workflow");
   });
 
-  it("does not generate agents/openai.yaml by default", async () => {
+  it("auto-generates agents/openai.yaml when the skill does not include it", async () => {
     await adapter.install(mockSkill, tempDir);
 
     const yamlPath = join(
@@ -141,10 +173,14 @@ describe("CodexAdapter", () => {
       "agents",
       "openai.yaml",
     );
-    expect(await exists(yamlPath)).toBe(false);
+    expect(await exists(yamlPath)).toBe(true);
+    const content = await readFile(yamlPath, "utf-8");
+    expect(content).toContain("display_name: Tdd Workflow");
+    expect(content).toContain("short_description: Red-Green-Refactor TDD workflow");
+    expect(content).toContain("allow_implicit_invocation: true");
   });
 
-  it("removes legacy agents/openai.yaml on reinstall", async () => {
+  it("replaces stale agents/openai.yaml with auto-generated one on reinstall", async () => {
     const yamlPath = join(
       tempDir,
       ".agents",
@@ -160,7 +196,10 @@ describe("CodexAdapter", () => {
 
     await adapter.install(mockSkill, tempDir);
 
-    expect(await exists(yamlPath)).toBe(false);
+    expect(await exists(yamlPath)).toBe(true);
+    const content = await readFile(yamlPath, "utf-8");
+    expect(content).not.toContain("legacy");
+    expect(content).toContain("display_name: Tdd Workflow");
   });
 
   it("removes skill directory including agents/", async () => {
@@ -181,7 +220,33 @@ describe("CodexAdapter", () => {
 
     expect(await exists(join(skillDir, "scripts", "rotate.py"))).toBe(true);
     expect(await exists(join(skillDir, "references", "api.md"))).toBe(true);
+    expect(await exists(join(skillDir, "agents", "openai.yaml"))).toBe(true);
 
-    expect(result.files.length).toBe(3);
+    expect(result.files.length).toBe(4);
+  });
+
+  it("preserves agents/openai.yaml when the canonical skill includes it", async () => {
+    await adapter.install(mockSkillWithCodexMetadata, tempDir);
+
+    const yamlPath = join(
+      tempDir,
+      ".agents",
+      "skills",
+      "deepagents",
+      "agents",
+      "openai.yaml",
+    );
+    const refPath = join(
+      tempDir,
+      ".agents",
+      "skills",
+      "deepagents",
+      "references",
+      "patterns.md",
+    );
+
+    expect(await exists(yamlPath)).toBe(true);
+    expect(await readFile(yamlPath, "utf-8")).toContain("display_name: DeepAgents");
+    expect(await exists(refPath)).toBe(true);
   });
 });

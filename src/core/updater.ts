@@ -10,6 +10,7 @@ import { type AIAgent, runInteractiveAgentSession } from "./ai-bridge.js";
 import {
   cloneRepos,
   cleanupClones,
+  createDocsUpdateSessionPrompt,
   createMultiSourceUpdateSessionPrompt,
   createTopicUpdateSessionPrompt,
   ensureGeneratedSkillSource,
@@ -147,8 +148,14 @@ async function updateGeneratedSkill(
   }
 
   const sources = skill.sources ?? [];
+  const docUrls = skill.doc_urls ?? [];
+
   if (sources.length > 0) {
     return await updateSourcedSkill(skill, sources, projectDir, log, aiAgent);
+  }
+
+  if (docUrls.length > 0) {
+    return await updateDocsOnlySkill(skill, docUrls, projectDir, log, aiAgent);
   }
 
   if (skill.research_query) {
@@ -156,7 +163,7 @@ async function updateGeneratedSkill(
   }
 
   throw new Error(
-    `Generated skill "${skill.name}" has no sources or research_query.`,
+    `Generated skill "${skill.name}" has no sources, doc_urls, or research_query.`,
   );
 }
 
@@ -204,6 +211,8 @@ async function updateSourcedSkill(
 
     await ensureGeneratedSkillSource(projectDir, skill.name);
 
+    const docUrls = skill.doc_urls ?? [];
+
     log(`Launching ${aiAgent} interactive session...`);
     await runInteractiveAgentSession({
       agent: aiAgent,
@@ -215,6 +224,7 @@ async function updateSourcedSkill(
           relPath: r.relPath,
           diffSummary: r.diffSummary,
         })),
+        docUrls.length > 0 ? docUrls : undefined,
       ),
     });
 
@@ -232,8 +242,9 @@ async function updateSourcedSkill(
     await installGeneratedSkill({
       skill: updatedSkill,
       projectDir,
-      agents: [aiAgent],
+      agents: skill.installed_for,
       sources: newSources,
+      docUrls: docUrls.length > 0 ? docUrls : undefined,
       researchQuery: skill.research_query,
       installedAt: skill.installed_at,
       lastUpdated: today,
@@ -321,11 +332,17 @@ async function updateTopicGeneratedSkill(
 
   await ensureGeneratedSkillSource(projectDir, skill.name);
 
+  const docUrls = skill.doc_urls ?? [];
+
   log(`Launching ${aiAgent} interactive session...`);
   await runInteractiveAgentSession({
     agent: aiAgent,
     cwd: projectDir,
-    prompt: createTopicUpdateSessionPrompt(skill.name, skill.research_query),
+    prompt: createTopicUpdateSessionPrompt(
+      skill.name,
+      skill.research_query,
+      docUrls.length > 0 ? docUrls : undefined,
+    ),
   });
 
   const updatedSkill = await resolveGeneratedSkill({
@@ -348,8 +365,9 @@ async function updateTopicGeneratedSkill(
   await installGeneratedSkill({
     skill: updatedSkill,
     projectDir,
-    agents: [aiAgent],
+    agents: skill.installed_for,
     sources: newSources.length > 0 ? newSources : undefined,
+    docUrls: docUrls.length > 0 ? docUrls : undefined,
     researchQuery: skill.research_query,
     installedAt: skill.installed_at,
     lastUpdated: today,
@@ -360,6 +378,58 @@ async function updateTopicGeneratedSkill(
     type: "generated",
     updated: true,
     reason: "Updated from fresh official-source research",
+  };
+}
+
+async function updateDocsOnlySkill(
+  skill: GeneratedSkill,
+  docUrls: string[],
+  projectDir: string,
+  log: (msg: string) => void,
+  aiAgent: AIAgent,
+): Promise<UpdateResult> {
+  await ensureGeneratedSkillSource(projectDir, skill.name);
+
+  log(`Launching ${aiAgent} interactive session...`);
+  await runInteractiveAgentSession({
+    agent: aiAgent,
+    cwd: projectDir,
+    prompt: createDocsUpdateSessionPrompt(skill.name, docUrls),
+  });
+
+  const updatedSkill = await resolveGeneratedSkill({
+    projectDir,
+    expectedName: skill.name,
+  });
+
+  // Capture any sources the agent discovered during update
+  const discoveredUrls = await parseSourcesYaml(projectDir, skill.name);
+  let newSources: SkillSource[] = [];
+
+  if (discoveredUrls.length > 0) {
+    log("Capturing versions from discovered sources...");
+    const clones = await cloneRepos(projectDir, discoveredUrls, { depth: 1, log });
+    newSources = clones.map((c) => ({ repo: c.repoUrl, commit_hash: c.commitHash }));
+    await cleanupClones(clones);
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  await installGeneratedSkill({
+    skill: updatedSkill,
+    projectDir,
+    agents: skill.installed_for,
+    sources: newSources.length > 0 ? newSources : undefined,
+    docUrls,
+    researchQuery: skill.research_query,
+    installedAt: skill.installed_at,
+    lastUpdated: today,
+  });
+
+  return {
+    name: skill.name,
+    type: "generated",
+    updated: true,
+    reason: "Updated from documentation sources",
   };
 }
 

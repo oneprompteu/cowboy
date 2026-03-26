@@ -8,7 +8,6 @@ import {
   GeneratedSkillSchema,
   SkillSourceSchema,
   CodexOpenAIYamlSchema,
-  normalizeGeneratedSkill,
 } from "../src/core/schemas.js";
 
 describe("SkillFrontmatterSchema", () => {
@@ -145,46 +144,63 @@ describe("InstalledRegistrySchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts generated skill", () => {
-    const result = GeneratedSkillSchema.safeParse({
-      name: "langchain-guide",
-      type: "generated",
-      library_repo: "https://github.com/langchain-ai/langchain",
+  it("defaults disabled_for to empty array", () => {
+    const result = ImportedSkillSchema.safeParse({
+      name: "tdd-workflow",
+      type: "imported",
+      source_repo: "https://github.com/test/repo",
+      source_path: "skills/tdd-workflow/SKILL.md",
+      content_hash: "sha256:abc123",
       installed_at: "2026-03-17",
-      last_updated: "2026-03-17",
-      installed_for: ["claude"],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts generated skill with commit_hash", () => {
-    const result = GeneratedSkillSchema.safeParse({
-      name: "langchain-guide",
-      type: "generated",
-      library_repo: "https://github.com/langchain-ai/langchain",
-      installed_at: "2026-03-17",
-      last_updated: "2026-03-17",
-      commit_hash: "abc1234def5678",
       installed_for: ["claude"],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.commit_hash).toBe("abc1234def5678");
+      expect(result.data.disabled_for).toEqual([]);
     }
   });
 
-  it("accepts generated skill without commit_hash (backward compat)", () => {
+  it("accepts skill with disabled_for agents", () => {
+    const result = ImportedSkillSchema.safeParse({
+      name: "tdd-workflow",
+      type: "imported",
+      source_repo: "https://github.com/test/repo",
+      source_path: "skills/tdd-workflow/SKILL.md",
+      content_hash: "sha256:abc123",
+      installed_at: "2026-03-17",
+      installed_for: ["claude", "codex"],
+      disabled_for: ["codex"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.disabled_for).toEqual(["codex"]);
+    }
+  });
+
+  it("accepts generated skill with sources", () => {
     const result = GeneratedSkillSchema.safeParse({
       name: "langchain-guide",
       type: "generated",
-      library_repo: "https://github.com/langchain-ai/langchain",
+      sources: [{ repo: "https://github.com/langchain-ai/langchain" }],
+      installed_at: "2026-03-17",
+      last_updated: "2026-03-17",
+      installed_for: ["claude"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts generated skill with sources and commit_hash", () => {
+    const result = GeneratedSkillSchema.safeParse({
+      name: "langchain-guide",
+      type: "generated",
+      sources: [{ repo: "https://github.com/langchain-ai/langchain", commit_hash: "abc1234def5678" }],
       installed_at: "2026-03-17",
       last_updated: "2026-03-17",
       installed_for: ["claude"],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.commit_hash).toBeUndefined();
+      expect(result.data.sources![0].commit_hash).toBe("abc1234def5678");
     }
   });
 
@@ -215,7 +231,7 @@ describe("InstalledRegistrySchema", () => {
         {
           name: "langchain-guide",
           type: "generated",
-          library_repo: "https://github.com/langchain-ai/langchain",
+          sources: [{ repo: "https://github.com/langchain-ai/langchain" }],
           installed_at: "2026-03-17",
           last_updated: "2026-03-17",
           installed_for: ["claude"],
@@ -295,7 +311,7 @@ describe("GeneratedSkillSchema with sources", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects skill with no sources, library_repo, or research_query", () => {
+  it("rejects skill with no sources, doc_urls, or research_query", () => {
     const result = GeneratedSkillSchema.safeParse({
       name: "orphan",
       type: "generated",
@@ -319,71 +335,58 @@ describe("GeneratedSkillSchema with sources", () => {
   });
 });
 
-describe("normalizeGeneratedSkill", () => {
-  it("migrates legacy library_repo + commit_hash to sources", () => {
-    const skill = {
-      name: "test",
-      type: "generated" as const,
-      library_repo: "https://github.com/test/lib",
-      commit_hash: "abc123",
+describe("GeneratedSkillSchema with doc_urls", () => {
+  it("accepts skill with doc_urls only", () => {
+    const result = GeneratedSkillSchema.safeParse({
+      name: "langchain-guide",
+      type: "generated",
+      doc_urls: ["https://docs.langchain.com"],
       installed_at: "2026-03-18",
       last_updated: "2026-03-18",
-      installed_for: ["claude" as const],
-    };
-
-    const normalized = normalizeGeneratedSkill(skill);
-    expect(normalized.sources).toEqual([
-      { repo: "https://github.com/test/lib", commit_hash: "abc123" },
-    ]);
+      installed_for: ["claude"],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.doc_urls).toEqual(["https://docs.langchain.com"]);
+    }
   });
 
-  it("migrates legacy library_repo without commit_hash", () => {
-    const skill = {
-      name: "test",
-      type: "generated" as const,
-      library_repo: "https://github.com/test/lib",
+  it("accepts skill with sources and doc_urls", () => {
+    const result = GeneratedSkillSchema.safeParse({
+      name: "data-analyst",
+      type: "generated",
+      sources: [{ repo: "https://github.com/scikit-learn/scikit-learn" }],
+      doc_urls: ["https://scikit-learn.org/stable/"],
       installed_at: "2026-03-18",
       last_updated: "2026-03-18",
-      installed_for: ["claude" as const],
-    };
-
-    const normalized = normalizeGeneratedSkill(skill);
-    expect(normalized.sources).toEqual([
-      { repo: "https://github.com/test/lib", commit_hash: undefined },
-    ]);
+      installed_for: ["claude"],
+    });
+    expect(result.success).toBe(true);
   });
 
-  it("keeps existing sources untouched", () => {
-    const sources = [
-      { repo: "https://github.com/a/b", commit_hash: "111" },
-      { repo: "https://github.com/c/d", commit_hash: "222" },
-    ];
-    const skill = {
-      name: "test",
-      type: "generated" as const,
-      sources,
-      installed_at: "2026-03-18",
-      last_updated: "2026-03-18",
-      installed_for: ["claude" as const],
-    };
-
-    const normalized = normalizeGeneratedSkill(skill);
-    expect(normalized.sources).toBe(sources);
-  });
-
-  it("returns topic-only skills unchanged", () => {
-    const skill = {
-      name: "test",
-      type: "generated" as const,
+  it("accepts skill with research_query and doc_urls", () => {
+    const result = GeneratedSkillSchema.safeParse({
+      name: "langchain-guide",
+      type: "generated",
       research_query: "langchain",
+      doc_urls: ["https://docs.langchain.com"],
       installed_at: "2026-03-18",
       last_updated: "2026-03-18",
-      installed_for: ["claude" as const],
-    };
+      installed_for: ["claude"],
+    });
+    expect(result.success).toBe(true);
+  });
 
-    const normalized = normalizeGeneratedSkill(skill);
-    expect(normalized.sources).toBeUndefined();
-    expect(normalized.research_query).toBe("langchain");
+  it("rejects skill with empty doc_urls and no other source", () => {
+    const result = GeneratedSkillSchema.safeParse({
+      name: "orphan",
+      type: "generated",
+      doc_urls: [],
+      installed_at: "2026-03-18",
+      last_updated: "2026-03-18",
+      installed_for: ["claude"],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

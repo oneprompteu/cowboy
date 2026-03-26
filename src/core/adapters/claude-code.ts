@@ -13,6 +13,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const skillDir = join(projectDir, ".claude", "skills", skill.name);
     const skillFile = join(skillDir, "SKILL.md");
 
+    await rm(skillDir, { recursive: true, force: true });
     await mkdir(skillDir, { recursive: true });
     await writeFile(skillFile, skill.rawContent, "utf-8");
 
@@ -20,6 +21,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
     if (skill.files) {
       for (const file of skill.files) {
+        if (file.relativePath === "agents/openai.yaml") {
+          continue;
+        }
+
         const filePath = join(skillDir, file.relativePath);
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, file.content);

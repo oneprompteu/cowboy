@@ -34,7 +34,7 @@ cowboy install https://github.com/ComposioHQ/awesome-claude-skills
 
 # 3. Or generate a new skill from a topic or repo
 cowboy generate langchain
-cowboy generate --repo https://github.com/microsoft/playwright
+cowboy generate --repo https://github.com/langchain-ai/deepagents
 ```
 
 That's it. Your agents now have the skills installed in the right places.
@@ -93,7 +93,7 @@ Generates a new skill from either a free-text topic or a library repo using your
 
 ```bash
 cowboy generate langchain
-cowboy generate --repo https://github.com/microsoft/playwright
+cowboy generate --repo https://github.com/langchain-ai/deepagents
 cowboy generate --repo https://github.com/stripe/stripe-node --name stripe-payments
 cowboy generate langchain --agent codex
 ```
@@ -105,9 +105,9 @@ What happens:
    - uses `--agent` if provided
    - otherwise uses the configured default agent if one exists
    - otherwise asks you to choose when multiple agents are configured
-4. Starts a real interactive Claude/Codex session in your current project
+4. Starts a real interactive Claude/Codex session in an isolated temporary workspace
 5. The agent writes the portable skill directly to `.cowboy/skills/{name}/`
-6. Cowboy installs that skill for the chosen agent used in the session
+6. Cowboy syncs that canonical skill into every configured agent directory through the corresponding adapter
 
 No API keys needed — uses your existing Claude Code or Codex subscription.
 
@@ -147,7 +147,7 @@ cowboy list
 #   tdd-workflow  imported  [claude, codex]
 #     https://github.com/ComposioHQ/awesome-claude-skills
 #   playwright  generated  [claude]
-#     https://github.com/microsoft/playwright
+#     https://github.com/langchain-ai/deepagents
 #
 # 3 skill(s) installed.
 ```
@@ -215,7 +215,8 @@ The `name` and `description` fields are required. The body contains practical gu
 | Project instructions | `CLAUDE.md` | `AGENTS.md` |
 
 Cowboy handles these differences automatically through adapters. You write one skill, it gets installed correctly for each agent.
-Cowboy does not generate `agents/openai.yaml` for Codex anymore; the current Codex docs treat extra metadata as optional, and `SKILL.md` is enough for installation.
+Cowboy treats `.cowboy/skills/{name}/` as the portable source of truth, then adapts it per agent. Optional Codex metadata such as `agents/openai.yaml` is preserved in the canonical package, copied into `.agents/skills`, and ignored for Claude installs.
+Cowboy manages project-local installs. It does not write to user-level Codex skill directories such as `~/.codex/skills`.
 
 ### Project structure
 

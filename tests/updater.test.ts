@@ -67,7 +67,7 @@ describe("updateSkills", () => {
     await installGeneratedSkill({
       skill: originalSkill,
       projectDir: tempDir,
-      agents: ["claude"],
+      agents: ["claude", "codex"],
       sources: [{ repo: "https://github.com/test/lib" }],
       installedAt,
       lastUpdated: previousLastUpdated,
@@ -109,7 +109,7 @@ describe("updateSkills", () => {
     if (registry.skills[0].type === "generated") {
       expect(registry.skills[0].installed_at).toBe(installedAt);
       expect(registry.skills[0].last_updated).toBe(today);
-      expect(registry.skills[0].installed_for).toEqual(["claude"]);
+      expect(registry.skills[0].installed_for).toEqual(["claude", "codex"]);
       expect(registry.skills[0].sources).toEqual([
         { repo: "https://github.com/test/lib", commit_hash: "newcommithash123" },
       ]);
@@ -124,6 +124,12 @@ describe("updateSkills", () => {
     expect(
       await readFile(
         join(tempDir, ".claude", "skills", "test-skill", "SKILL.md"),
+        "utf-8",
+      ),
+    ).toContain("Updated generated skill");
+    expect(
+      await readFile(
+        join(tempDir, ".agents", "skills", "test-skill", "SKILL.md"),
         "utf-8",
       ),
     ).toContain("Updated generated skill");
@@ -312,6 +318,89 @@ describe("updateSkills", () => {
       expect(registry.skills[0].sources).toEqual([
         { repo: "https://github.com/test/lib", commit_hash: "newcommithash123" },
       ]);
+    }
+  });
+
+  it("updates docs-only generated skill by re-running agent", async () => {
+    const today = new Date().toISOString().split("T")[0];
+
+    await installGeneratedSkill({
+      skill: originalSkill,
+      projectDir: tempDir,
+      agents: ["claude"],
+      docUrls: ["https://docs.example.com"],
+      installedAt: "2026-03-01",
+      lastUpdated: "2026-03-05",
+    });
+
+    sessionMock.mockImplementation(async ({ cwd, prompt }: { cwd: string; prompt: string }) => {
+      expect(prompt).toContain("https://docs.example.com");
+
+      const skillDir = join(cwd, ".cowboy", "skills", "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        '---\nname: test-skill\ndescription: "Updated from docs"\n---\n\n# Updated',
+        "utf-8",
+      );
+    });
+
+    const results = await updateSkills({
+      projectDir: tempDir,
+      aiAgent: "claude",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].updated).toBe(true);
+    expect(results[0].reason).toBe("Updated from documentation sources");
+    expect(cloneMock).not.toHaveBeenCalled();
+
+    const registry = await readRegistry(tempDir);
+    if (registry.skills[0].type === "generated") {
+      expect(registry.skills[0].installed_at).toBe("2026-03-01");
+      expect(registry.skills[0].last_updated).toBe(today);
+      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
+    }
+  });
+
+  it("includes doc_urls in sourced skill update prompt", async () => {
+    await installGeneratedSkill({
+      skill: originalSkill,
+      projectDir: tempDir,
+      agents: ["claude"],
+      sources: [{ repo: "https://github.com/test/lib" }],
+      docUrls: ["https://docs.example.com"],
+      installedAt: "2026-03-01",
+      lastUpdated: "2026-03-05",
+    });
+
+    logMock.mockResolvedValue({
+      total: 1,
+      all: [{ message: "Update docs" }],
+    });
+
+    sessionMock.mockImplementation(async ({ cwd, prompt }: { cwd: string; prompt: string }) => {
+      expect(prompt).toContain("https://docs.example.com");
+
+      const skillDir = join(cwd, ".cowboy", "skills", "test-skill");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        '---\nname: test-skill\ndescription: "Updated"\n---\n\n# Updated',
+        "utf-8",
+      );
+    });
+
+    const results = await updateSkills({
+      projectDir: tempDir,
+      aiAgent: "claude",
+    });
+
+    expect(results[0].updated).toBe(true);
+
+    const registry = await readRegistry(tempDir);
+    if (registry.skills[0].type === "generated") {
+      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
     }
   });
 });

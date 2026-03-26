@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import {
   InstalledRegistrySchema,
-  normalizeGeneratedSkill,
   type InstalledRegistry,
   type InstalledSkill,
 } from "./schemas.js";
@@ -23,11 +22,7 @@ export async function readRegistry(
   try {
     const content = await readFile(filePath, "utf-8");
     const data = yamlParse(content);
-    const registry = InstalledRegistrySchema.parse(data ?? {});
-    registry.skills = registry.skills.map((skill) =>
-      skill.type === "generated" ? normalizeGeneratedSkill(skill) : skill,
-    );
-    return registry;
+    return InstalledRegistrySchema.parse(data ?? {});
   } catch {
     return { skills: [] };
   }

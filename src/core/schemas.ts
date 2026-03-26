@@ -70,6 +70,7 @@ const InstalledSkillBase = z.object({
   name: z.string(),
   installed_at: z.string(),
   installed_for: z.array(AgentType),
+  disabled_for: z.array(AgentType).default([]),
 });
 
 export const ImportedSkillSchema = InstalledSkillBase.extend({
@@ -88,39 +89,21 @@ export type SkillSource = z.infer<typeof SkillSourceSchema>;
 
 export const GeneratedSkillSchema = InstalledSkillBase.extend({
   type: z.literal("generated"),
-  /** @deprecated Use sources instead. Kept for reading old installed.yaml files. */
-  library_repo: z.string().url().optional(),
-  /** @deprecated Use sources instead. Kept for reading old installed.yaml files. */
-  commit_hash: z.string().optional(),
   research_query: z.string().min(1).optional(),
   sources: z.array(SkillSourceSchema).optional(),
+  doc_urls: z.array(z.string().url()).optional(),
   last_updated: z.string(),
 }).refine(
   (skill) => Boolean(
     (skill.sources && skill.sources.length > 0) ||
-    skill.library_repo ||
+    (skill.doc_urls && skill.doc_urls.length > 0) ||
     skill.research_query
   ),
   {
-    message: "Generated skills require sources, library_repo, or research_query",
+    message: "Generated skills require sources, doc_urls, or research_query",
     path: ["sources"],
   },
 );
-
-/**
- * Normalize legacy GeneratedSkill entries: migrate library_repo + commit_hash
- * into the sources array. Called by readRegistry() on load.
- */
-export function normalizeGeneratedSkill(skill: GeneratedSkill): GeneratedSkill {
-  if (skill.sources?.length) return skill;
-  if (skill.library_repo) {
-    return {
-      ...skill,
-      sources: [{ repo: skill.library_repo, commit_hash: skill.commit_hash }],
-    };
-  }
-  return skill;
-}
 
 export const InstalledSkillSchema = z.discriminatedUnion("type", [
   ImportedSkillSchema,
