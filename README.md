@@ -1,301 +1,360 @@
-# Cowboy
+<p align="center">
+  <img src="./assets/cowboys.png" alt="Cowboy cover art" width="100%" />
+</p>
 
-The easiest way to equip AI coding agents with skills — and keep them up to date.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/title_dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="./assets/title_light.png" />
+    <img src="./assets/title_light.png" alt="Cowboy" width="520" />
+  </picture>
+</p>
 
-Cowboy installs, generates, and updates skills for **Claude Code** and **Codex**, so your agents are actually good at the tasks you need them for.
+<p align="center">
+<strong>The package manager for AI agent skills.</strong>
+</p>
 
-## The problem
+<p align="center">
+Cowboy turns reusable AI agent instructions into portable, versioned, auto-updating skill packages that work across Claude Code and Codex.
+</p>
 
-You want your AI agent to be good at X (testing with Playwright, using Stripe's SDK, following your team's TDD workflow...). Today you either:
+---
 
-1. **Copy skills manually** from GitHub repos into the right directories for each agent
-2. **Write SKILL.md files by hand** from documentation, which get stale as libraries evolve
+# Why Cowboy
 
-Cowboy automates both.
+AI coding agents get **dramatically better** when they have strong, task-specific instructions.
 
-## Install
+But today, skills are:
+
+* copied manually between repos
+* duplicated across agent ecosystems
+* outdated after a few weeks
+* hard to maintain
+* impossible to version properly
+
+Cowboy fixes this.
+
+It gives you a **single project-local source of truth** for skills that can be:
+
+* installed from GitHub
+* generated automatically from docs or repos
+* synced to multiple agents
+* updated to latest versions
+* enabled or disabled per agent
+* maintained over time
+
+All with a simple CLI.
+
+And most importantly:
+
+**Cowboy uses your existing Codex or Claude Code subscription.**
+No API keys. No extra cost. No vendor lock-in.
+
+---
+
+# What Makes Cowboy Different
+
+## Auto-updating skills
+
+Install a skill once.
+Update it anytime.
+
+```bash
+cowboy update
+```
+
+Cowboy re-fetches imported skills and regenerates AI-authored ones using the latest docs or repos.
+
+Your agents always stay up to date.
+
+---
+
+## Generate skills automatically
+
+Create new skills from:
+
+* GitHub repositories
+* documentation URLs
+* local documentation directories
+* free-text topics
+
+```bash
+cowboy generate playwright testing
+cowboy generate --repo https://github.com/langchain-ai/deepagents
+cowboy generate --docs https://docs.stripe.com/api
+cowboy generate --docs ~/docs/stripe-api
+cowboy generate --repo https://github.com/langchain-ai/deepagents --docs ~/docs/deepagents
+```
+
+Cowboy uses **your local agent CLI** to generate the skill — completely free.
+
+---
+
+## Multi-agent sync
+
+Install once.
+Use everywhere.
+
+Cowboy syncs the same skill to:
+
+* Claude Code
+* Codex
+
+From one canonical package.
+
+---
+
+## One canonical source of truth
+
+Skills live in:
+
+```
+.cowboy/skills/{name}/
+```
+
+Cowboy syncs them automatically to agent-specific directories.
+
+No drift. No duplication. No manual copy-paste.
+
+---
+
+# Features
+
+| Capability               | What Cowboy does                                   |
+| ------------------------ | -------------------------------------------------- |
+| Auto updates             | Refresh skills from GitHub or regenerate from docs |
+| AI skill generation      | Generate skills from repos, docs, or topics        |
+| Multi-agent install      | Sync skills to Claude Code and Codex               |
+| Canonical storage        | One source of truth in `.cowboy/skills/`           |
+| Repo import              | Install skills from GitHub skill repositories      |
+| Free generation          | Uses your own Codex / Claude Code subscription     |
+| Explicit install targets | Generate with one agent, install to another        |
+| Enable / disable         | Toggle skills per agent without deleting           |
+| Version control friendly | Skills are local, portable, and commit-safe        |
+| No vendor lock-in        | Works with local agent CLIs                        |
+
+---
+
+# Installation
 
 ```bash
 npm install -g cowboy-cli
 ```
 
-The package is published as `cowboy-cli`, but the command is just `cowboy`.
+## Requirements
 
-Requires Node.js >= 18.
+* Node.js `>= 18`
+* At least one supported agent CLI:
 
-## Quick start
+  * Claude Code
+  * Codex
 
-```bash
-# 1. Initialize in your project (choose your agents interactively)
-cowboy init
+The published package name is `cowboy-cli`, and the executable is `cowboy`.
 
-# 2. Install skills from a GitHub repo
-cowboy install https://github.com/ComposioHQ/awesome-claude-skills
+---
 
-# 3. Or generate a new skill from a topic or repo
-cowboy generate langchain
-cowboy generate --repo https://github.com/langchain-ai/deepagents
-```
-
-That's it. Your agents now have the skills installed in the right places.
-
-## Documentation
-
-Additional project documentation lives in `docs/` and can be served locally with MkDocs.
-
-- `docs/index.md` — overview and quick start
-- `docs/commands.md` — command reference
-- `docs/generation.md` — repo-based and topic-based generation flow
-- `docs/architecture.md` — canonical skill layout and install model
-
-## Commands
-
-### `cowboy init`
-
-Interactive setup: choose which agents you use, and Cowboy creates the necessary directories and `.cowboy/config.yaml`. Also installs built-in skills (like `skill-creator`, which teaches your agent how to create new skills).
-
-If you configure only one agent, Cowboy stores it as the default agent automatically.
+# Quick Start
 
 ```bash
 cowboy init
-# ? Which agents do you use? (select with space)
-#   ◉ Claude Code
-#   ◉ Codex
-# ✓ Built-in skill: skill-creator
-# Cowboy initialized.
-# Agents: claude, codex
-```
-
-### `cowboy install <github-url>`
-
-Scans a GitHub repo for skills, lets you pick which ones to install, and places them in the correct directories for each of your agents. Skills can be a single SKILL.md or an entire directory with scripts, references, and assets — Cowboy copies everything.
-
-```bash
-# Interactive selection
 cowboy install https://github.com/ComposioHQ/awesome-claude-skills
-
-# Install all skills from the repo
-cowboy install https://github.com/ComposioHQ/awesome-claude-skills --all
-```
-
-What happens:
-1. Shallow-clones the repo
-2. Finds all `SKILL.md` files and their companion files (scripts, references, assets)
-3. You select which skills you want (or use `--all`)
-4. Copies the entire skill directory for each agent:
-   - **Claude Code**: `.claude/skills/{name}/`
-   - **Codex**: `.agents/skills/{name}/`
-5. Tracks the installation in `.cowboy/installed.yaml`
-
-### `cowboy generate [topic]`
-
-Generates a new skill from either a free-text topic or a library repo using your AI agent (Claude Code or Codex CLI).
-
-```bash
-cowboy generate langchain
-cowboy generate --repo https://github.com/langchain-ai/deepagents
-cowboy generate --repo https://github.com/stripe/stripe-node --name stripe-payments
-cowboy generate langchain --agent codex
-```
-
-What happens:
-1. If you pass `--repo`, Cowboy shallow-clones the library repo and exposes it to the agent
-2. If you pass free text like `langchain`, Cowboy starts a topic-oriented agent session instead
-3. Selects the agent to use:
-   - uses `--agent` if provided
-   - otherwise uses the configured default agent if one exists
-   - otherwise asks you to choose when multiple agents are configured
-4. Starts a real interactive Claude/Codex session in an isolated temporary workspace
-5. The agent writes the portable skill directly to `.cowboy/skills/{name}/`
-6. Cowboy syncs that canonical skill into every configured agent directory through the corresponding adapter
-
-No API keys needed — uses your existing Claude Code or Codex subscription.
-
-### `cowboy update [name]`
-
-Updates installed skills. Two strategies depending on how the skill was installed:
-
-```bash
-# Update all skills
+cowboy generate playwright testing
 cowboy update
-
-# Update a specific skill
-cowboy update playwright
-```
-
-- **Imported skills** (from `install`): re-fetches from the source repo, compares content hash (covers all files, not just SKILL.md), replaces if changed. Deterministic.
-- **Generated skills** (from `generate`):
-  - repo-based: clones the library repo, checks `git log` for changes since last update, then opens a real AI agent session so the skill in `.cowboy/skills/{name}/` can be updated in place.
-  - topic-based: opens a fresh research session using the saved query and updates the skill in place from current official sources.
-
-### `cowboy default-agent <agent>`
-
-Sets the default agent Cowboy should use when `generate` needs an agent choice and no `--agent` flag is passed.
-
-```bash
-cowboy default-agent claude
-cowboy default-agent codex
-```
-
-### `cowboy list`
-
-Shows all installed skills with their type and which agents they're installed for.
-
-```bash
 cowboy list
-#   skill-creator  builtin  [claude, codex]
-#   tdd-workflow  imported  [claude, codex]
-#     https://github.com/ComposioHQ/awesome-claude-skills
-#   playwright  generated  [claude]
-#     https://github.com/langchain-ai/deepagents
-#
-# 3 skill(s) installed.
 ```
 
-### `cowboy remove <name>`
+---
 
-Removes a skill's files from all agents and cleans up tracking.
+# Core Workflows
+
+## Install skills from GitHub
 
 ```bash
-cowboy remove tdd-workflow
-# ✓ Removed tdd-workflow
+cowboy install https://github.com/ComposioHQ/awesome-claude-skills
+cowboy install https://github.com/ComposioHQ/awesome-claude-skills --install-for codex
+cowboy install <repo> --install-for claude --install-for codex
 ```
 
-### `cowboy agents`
+---
 
-Shows which agents are detected in the current project.
+## Generate skills automatically
 
 ```bash
-cowboy agents
-# Detected agents:
-#   ● claude
-#   ● codex
+cowboy generate langchain retrieval
+cowboy generate --repo https://github.com/langchain-ai/deepagents
+cowboy generate --docs https://playwright.dev/docs/intro
+cowboy generate --docs ~/docs/playwright
+cowboy generate --docs https://playwright.dev/docs/intro --docs ~/docs/playwright
 ```
 
-## How it works
+`--docs` now accepts either a documentation URL or a local directory path. Local directories are exposed directly to the agent session so it can build the skill from files on disk as well as web docs.
 
-### What is a skill
+Cross-agent example:
 
-A skill is a self-contained package that extends an AI agent's capabilities. It can be as simple as a single SKILL.md file, or a full directory with scripts, references, and assets:
+```bash
+cowboy generate --repo https://github.com/stripe/stripe-node --agent codex --install-for claude
+```
+
+Runtime override:
+
+```bash
+cowboy generate \
+  --repo https://github.com/langchain-ai/langgraph \
+  --agent codex \
+  --effort xhigh
+```
+
+---
+
+## Update skills
+
+```bash
+cowboy update
+cowboy update playwright-testing
+cowboy update --agent codex --effort high
+```
+
+---
+
+# How Cowboy Works
+
+Cowboy manages skills in three layers:
+
+### 1. Discovery or generation
+
+* Imported from GitHub
+* Generated from docs/repos/topics
+
+### 2. Canonical storage
+
+```
+.cowboy/skills/{name}/
+```
+
+Portable and versionable.
+
+### 3. Agent sync
+
+```
+.claude/skills/
+.agents/skills/
+```
+
+Cowboy keeps everything in sync automatically.
+
+---
+
+# Skill Package Format
 
 ```
 skill-name/
-├── SKILL.md              (required — YAML frontmatter + markdown instructions)
-├── scripts/              (optional — executable code: Python, Bash, etc.)
-│   └── extract.py
-├── references/           (optional — docs loaded into context as needed)
-│   └── api-docs.md
-└── assets/               (optional — files used in output, not loaded into context)
-    └── template.html
+├── SKILL.md
+├── scripts/
+├── references/
+└── assets/
 ```
 
-### SKILL.md format
+Example:
 
-Every skill has a SKILL.md with YAML frontmatter and a markdown body:
-
-```markdown
+```md
 ---
-name: tdd-workflow
-description: "Red-Green-Refactor TDD workflow"
+name: playwright-testing
+description: Reliable browser testing workflows with Playwright
 ---
 
-# TDD Workflow
+# Playwright Testing
 
-Always write the test first...
+Prefer deterministic selectors and isolate flaky test causes before retrying.
 ```
 
-The `name` and `description` fields are required. The body contains practical guidance for the AI agent. Companion files (scripts, references, assets) are referenced from the body.
+---
 
-### Agent differences
-
-| | Claude Code | Codex |
-|---|---|---|
-| Installed form | `.claude/skills/{name}/SKILL.md` | `.agents/skills/{name}/SKILL.md` |
-| Companion files | `.claude/skills/{name}/...` | `.agents/skills/{name}/...` |
-| Project instructions | `CLAUDE.md` | `AGENTS.md` |
-
-Cowboy handles these differences automatically through adapters. You write one skill, it gets installed correctly for each agent.
-Cowboy treats `.cowboy/skills/{name}/` as the portable source of truth, then adapts it per agent. Optional Codex metadata such as `agents/openai.yaml` is preserved in the canonical package, copied into `.agents/skills`, and ignored for Claude installs.
-Cowboy manages project-local installs. It does not write to user-level Codex skill directories such as `~/.codex/skills`.
-
-### Project structure
-
-After running Cowboy, your project gets:
+# Project Layout
 
 ```
 your-project/
 ├── .cowboy/
-│   ├── config.yaml        # Configured agents
-│   ├── installed.yaml     # Installed skills registry
-│   └── skills/            # Canonical source for generated skills
-│       └── pdf-editor/
-│           ├── SKILL.md
-│           ├── scripts/
-│           │   └── rotate.py
-│           └── references/
-│               └── api-docs.md
+│   ├── config.yaml
+│   ├── installed.yaml
+│   └── skills/
 ├── .claude/
 │   └── skills/
-│       ├── skill-creator/
-│       │   └── SKILL.md
-│       └── pdf-editor/
-│           ├── SKILL.md
-│           ├── scripts/
-│           │   └── rotate.py
-│           └── references/
-│               └── api-docs.md
 └── .agents/
     └── skills/
-        └── pdf-editor/
-            ├── SKILL.md
-            ├── scripts/
-            │   └── rotate.py
-            ├── references/
-            │   └── api-docs.md
 ```
 
-### Built-in skills
+---
 
-Cowboy ships with a `skill-creator` skill that teaches your AI agent how to create well-structured skills — covering the directory anatomy, when to use scripts vs references vs assets, and the progressive disclosure design principle.
-It also instructs the agent to prefer official documentation and maintainer sources, and to save a concise bibliography when external research matters.
+# Supported Agents
 
-### AI generation
+| Agent       | Install location         |
+| ----------- | ------------------------ |
+| Claude Code | `.claude/skills/{name}/` |
+| Codex       | `.agents/skills/{name}/` |
 
-The `generate` and `update` commands use your local AI agent CLI:
+Cowboy installs **project-local skills only**.
 
-- **Claude Code**: runs `claude "prompt" --add-dir <cloned-repo>` in interactive mode
-- **Codex**: runs `codex -s workspace-write --add-dir <cloned-repo> "prompt"` in interactive mode and `codex exec --full-auto -s workspace-write --skip-git-repo-check ...` in headless mode
+---
 
-The agent works directly in your project and writes the skill to `.cowboy/skills/`. Cowboy then installs it for the configured agent. No separate API keys, no extra costs.
-
-## Development
+# Commands
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Run tests
-pnpm test
-
-# Watch mode
-pnpm test:watch
-
-# Type check
-npx tsc --noEmit
-
-# Serve docs locally
-python3 -m mkdocs serve
-
-# Build docs
-python3 -m mkdocs build
-
-# Build
-pnpm build
-
-# Local testing (after build)
-npm link
+cowboy init
+cowboy install <github-url>
+cowboy generate [topic]
+cowboy update
+cowboy list
+cowboy enable <name>
+cowboy disable <name>
+cowboy remove <name>
+cowboy agents
+cowboy default-agent <agent>
 ```
 
-## License
+---
+
+# Documentation
+
+See `docs/`:
+
+* `docs/index.md`
+* `docs/commands.md`
+* `docs/generation.md`
+* `docs/architecture.md`
+* `docs/maintainers.md`
+
+---
+
+# Open Source
+
+Cowboy is structured for external contributors and maintainers:
+
+* `CONTRIBUTING.md` for the contribution workflow
+* `CODE_OF_CONDUCT.md` for community expectations
+* `SECURITY.md` for responsible disclosure
+* `CHANGELOG.md` for release history
+* `docs/maintainers.md` for branch protection and release operations
+
+---
+
+# Contributing
+
+See `CONTRIBUTING.md` before opening a pull request.
+
+High-signal defaults:
+
+* Keep skills portable
+* Avoid agent-specific assumptions in core flows
+* Add tests for behavior changes
+* Update docs when CLI behavior changes
+
+```bash
+pnpm test
+pnpm build
+```
+
+---
+
+# License
 
 MIT

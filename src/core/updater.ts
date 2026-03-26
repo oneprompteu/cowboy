@@ -16,9 +16,9 @@ import {
   ensureGeneratedSkillSource,
   extractRepoName,
   parseSourcesYaml,
+  resolveDocSources,
   resolveGeneratedSkill,
 } from "./generator.js";
-import { detectAgentTypes } from "./detector.js";
 import type { ImportedSkill, GeneratedSkill, ScannedSkill, SkillSource } from "./schemas.js";
 
 export interface UpdateResult {
@@ -32,6 +32,8 @@ export interface UpdateOptions {
   projectDir: string;
   skillName?: string;
   aiAgent?: AIAgent;
+  agentModel?: string;
+  agentEffort?: string;
   onProgress?: (message: string) => void;
 }
 
@@ -45,7 +47,6 @@ export async function updateSkills(
 ): Promise<UpdateResult[]> {
   const { projectDir, skillName } = options;
   const registry = await readRegistry(projectDir);
-  const detectedAgents = await detectAgentTypes(projectDir);
 
   const skills = skillName
     ? registry.skills.filter((skill) => skill.name === skillName)
@@ -62,7 +63,7 @@ export async function updateSkills(
     if (skill.type === "imported") {
       log(`Checking ${skill.name} (imported)...`);
       results.push(
-        await updateImportedSkill(skill, projectDir, detectedAgents, log),
+        await updateImportedSkill(skill, projectDir, log),
       );
       continue;
     }
@@ -74,6 +75,8 @@ export async function updateSkills(
         projectDir,
         log,
         options.aiAgent,
+        options.agentModel,
+        options.agentEffort,
       ),
     );
   }
@@ -84,7 +87,6 @@ export async function updateSkills(
 async function updateImportedSkill(
   skill: ImportedSkill,
   projectDir: string,
-  agents: string[],
   log: (msg: string) => void,
 ): Promise<UpdateResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "cowboy-update-"));
@@ -120,7 +122,7 @@ async function updateImportedSkill(
     await installSkill({
       skill: updated,
       projectDir,
-      agents: agents as any,
+      agents: skill.installed_for,
       sourceRepo: skill.source_repo,
     });
 
@@ -140,6 +142,8 @@ async function updateGeneratedSkill(
   projectDir: string,
   log: (msg: string) => void,
   aiAgent?: AIAgent,
+  agentModel?: string,
+  agentEffort?: string,
 ): Promise<UpdateResult> {
   if (!aiAgent) {
     throw new Error(
@@ -151,15 +155,15 @@ async function updateGeneratedSkill(
   const docUrls = skill.doc_urls ?? [];
 
   if (sources.length > 0) {
-    return await updateSourcedSkill(skill, sources, projectDir, log, aiAgent);
+    return await updateSourcedSkill(skill, sources, projectDir, log, aiAgent, agentModel, agentEffort);
   }
 
   if (docUrls.length > 0) {
-    return await updateDocsOnlySkill(skill, docUrls, projectDir, log, aiAgent);
+    return await updateDocsOnlySkill(skill, docUrls, projectDir, log, aiAgent, agentModel, agentEffort);
   }
 
   if (skill.research_query) {
-    return await updateTopicGeneratedSkill(skill, projectDir, log, aiAgent);
+    return await updateTopicGeneratedSkill(skill, projectDir, log, aiAgent, agentModel, agentEffort);
   }
 
   throw new Error(
@@ -181,6 +185,8 @@ async function updateSourcedSkill(
   projectDir: string,
   log: (msg: string) => void,
   aiAgent: AIAgent,
+  agentModel?: string,
+  agentEffort?: string,
 ): Promise<UpdateResult> {
   const clones = await cloneRepos(
     projectDir,
@@ -211,7 +217,11 @@ async function updateSourcedSkill(
 
     await ensureGeneratedSkillSource(projectDir, skill.name);
 
-    const docUrls = skill.doc_urls ?? [];
+    const resolvedDocSources = await resolveDocSources(
+      skill.doc_urls ?? [],
+      projectDir,
+    );
+    const docUrls = resolvedDocSources.entries;
 
     log(`Launching ${aiAgent} interactive session...`);
     await runInteractiveAgentSession({
@@ -226,6 +236,9 @@ async function updateSourcedSkill(
         })),
         docUrls.length > 0 ? docUrls : undefined,
       ),
+      addDirs: resolvedDocSources.localDirs,
+      model: agentModel,
+      effort: agentEffort,
     });
 
     const updatedSkill = await resolveGeneratedSkill({
@@ -323,6 +336,8 @@ async function updateTopicGeneratedSkill(
   projectDir: string,
   log: (msg: string) => void,
   aiAgent: AIAgent,
+  agentModel?: string,
+  agentEffort?: string,
 ): Promise<UpdateResult> {
   if (!skill.research_query) {
     throw new Error(
@@ -332,7 +347,11 @@ async function updateTopicGeneratedSkill(
 
   await ensureGeneratedSkillSource(projectDir, skill.name);
 
-  const docUrls = skill.doc_urls ?? [];
+  const resolvedDocSources = await resolveDocSources(
+    skill.doc_urls ?? [],
+    projectDir,
+  );
+  const docUrls = resolvedDocSources.entries;
 
   log(`Launching ${aiAgent} interactive session...`);
   await runInteractiveAgentSession({
@@ -343,6 +362,9 @@ async function updateTopicGeneratedSkill(
       skill.research_query,
       docUrls.length > 0 ? docUrls : undefined,
     ),
+    addDirs: resolvedDocSources.localDirs,
+    model: agentModel,
+    effort: agentEffort,
   });
 
   const updatedSkill = await resolveGeneratedSkill({
@@ -387,14 +409,21 @@ async function updateDocsOnlySkill(
   projectDir: string,
   log: (msg: string) => void,
   aiAgent: AIAgent,
+  agentModel?: string,
+  agentEffort?: string,
 ): Promise<UpdateResult> {
+  const resolvedDocSources = await resolveDocSources(docUrls, projectDir);
+
   await ensureGeneratedSkillSource(projectDir, skill.name);
 
   log(`Launching ${aiAgent} interactive session...`);
   await runInteractiveAgentSession({
     agent: aiAgent,
     cwd: projectDir,
-    prompt: createDocsUpdateSessionPrompt(skill.name, docUrls),
+    prompt: createDocsUpdateSessionPrompt(skill.name, resolvedDocSources.entries),
+    addDirs: resolvedDocSources.localDirs,
+    model: agentModel,
+    effort: agentEffort,
   });
 
   const updatedSkill = await resolveGeneratedSkill({
@@ -419,7 +448,7 @@ async function updateDocsOnlySkill(
     projectDir,
     agents: skill.installed_for,
     sources: newSources.length > 0 ? newSources : undefined,
-    docUrls,
+    docUrls: resolvedDocSources.entries,
     researchQuery: skill.research_query,
     installedAt: skill.installed_at,
     lastUpdated: today,

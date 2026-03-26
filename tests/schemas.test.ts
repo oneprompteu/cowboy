@@ -3,6 +3,8 @@ import {
   SkillFrontmatterSchema,
   ScannedSkillSchema,
   CowboyConfigSchema,
+  ClaudeGenerationDefaultsSchema,
+  CodexGenerationDefaultsSchema,
   InstalledRegistrySchema,
   ImportedSkillSchema,
   GeneratedSkillSchema,
@@ -74,6 +76,15 @@ describe("CowboyConfigSchema", () => {
     const result = CowboyConfigSchema.safeParse({
       agents: ["claude", "codex"],
       default_agent: "codex",
+      generation_defaults: {
+        claude: {
+          model: "sonnet",
+          effort: "high",
+        },
+        codex: {
+          effort: "xhigh",
+        },
+      },
     });
     expect(result.success).toBe(true);
   });
@@ -96,12 +107,12 @@ describe("CowboyConfigSchema", () => {
     }
   });
 
-  it("rejects default_agent that is not configured", () => {
+  it("allows default_agent to differ from install targets", () => {
     const result = CowboyConfigSchema.safeParse({
       agents: ["claude"],
       default_agent: "codex",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("normalizes legacy claude-code values", () => {
@@ -114,6 +125,21 @@ describe("CowboyConfigSchema", () => {
       expect(result.data.agents).toEqual(["claude", "codex"]);
       expect(result.data.default_agent).toBe("claude");
     }
+  });
+
+  it("accepts Claude generation defaults", () => {
+    const result = ClaudeGenerationDefaultsSchema.safeParse({
+      model: "claude-sonnet-4-6",
+      effort: "max",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts Codex generation defaults", () => {
+    const result = CodexGenerationDefaultsSchema.safeParse({
+      effort: "minimal",
+    });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -340,14 +366,17 @@ describe("GeneratedSkillSchema with doc_urls", () => {
     const result = GeneratedSkillSchema.safeParse({
       name: "langchain-guide",
       type: "generated",
-      doc_urls: ["https://docs.langchain.com"],
+      doc_urls: ["https://docs.langchain.com", "/Users/test/docs/langchain"],
       installed_at: "2026-03-18",
       last_updated: "2026-03-18",
       installed_for: ["claude"],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.doc_urls).toEqual(["https://docs.langchain.com"]);
+      expect(result.data.doc_urls).toEqual([
+        "https://docs.langchain.com",
+        "/Users/test/docs/langchain",
+      ]);
     }
   });
 

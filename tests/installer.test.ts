@@ -312,11 +312,14 @@ describe("disableSkill / enableSkill", () => {
 
 describe("installGeneratedSkill with doc_urls", () => {
   it("persists doc_urls in the registry", async () => {
+    const localDocsDir = join(tempDir, "local-docs");
+    await mkdir(localDocsDir, { recursive: true });
+
     await installGeneratedSkill({
       skill: mockSkill,
       projectDir: tempDir,
       agents: ["claude"],
-      docUrls: ["https://docs.example.com"],
+      docUrls: ["https://docs.example.com", localDocsDir],
     });
 
     const registry = await readRegistry(tempDir);
@@ -324,7 +327,7 @@ describe("installGeneratedSkill with doc_urls", () => {
     expect(registry.skills[0].type).toBe("generated");
 
     if (registry.skills[0].type === "generated") {
-      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
+      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com", localDocsDir]);
     }
   });
 

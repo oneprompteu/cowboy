@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible defect in Cowboy
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please provide a minimal, reproducible case.
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior.
+      placeholder: The command failed after...
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: What did you expect to happen?
+      placeholder: I expected Cowboy to...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, flags, and repo state when possible.
+      placeholder: |
+        1. Run `cowboy ...`
+        2. Select ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Share versions and platform details.
+      placeholder: |
+        Node.js:
+        pnpm:
+        Cowboy:
+        OS:
+        Agent CLI:
+    validations:
+      required: true

@@ -3,6 +3,8 @@ import {
   buildHeadlessAgentCommand,
   buildInteractiveAgentCommand,
   buildSteerableClaudeCommand,
+  formatHeadlessSessionFooter,
+  formatHeadlessSessionHeader,
   parseClaudeStreamEvent,
 } from "../src/core/ai-bridge.js";
 
@@ -11,11 +13,15 @@ describe("buildInteractiveAgentCommand", () => {
     const [cmd, args] = buildInteractiveAgentCommand(
       "claude",
       "Create the skill",
-      { addDirs: ["/tmp/library-repo"] },
+      { addDirs: ["/tmp/library-repo"], model: "sonnet", effort: "high" },
     );
 
     expect(cmd).toBe("claude");
     expect(args).toEqual([
+      "--model",
+      "sonnet",
+      "--effort",
+      "high",
       "Create the skill",
       "--add-dir",
       "/tmp/library-repo",
@@ -30,13 +36,15 @@ describe("buildInteractiveAgentCommand", () => {
     const [cmd, args] = buildInteractiveAgentCommand(
       "codex",
       "Update the skill",
-      { addDirs: ["/tmp/library-repo"] },
+      { addDirs: ["/tmp/library-repo"], effort: "xhigh" },
     );
 
     expect(cmd).toBe("codex");
     expect(args).toEqual([
       "-s",
       "workspace-write",
+      "-c",
+      'model_reasoning_effort="xhigh"',
       "--add-dir",
       "/tmp/library-repo",
       "Update the skill",
@@ -66,11 +74,15 @@ describe("buildHeadlessAgentCommand", () => {
     const [cmd, args] = buildHeadlessAgentCommand(
       "claude",
       "Create the skill",
-      { addDirs: ["/tmp/library-repo"] },
+      { addDirs: ["/tmp/library-repo"], model: "opus", effort: "max" },
     );
 
     expect(cmd).toBe("claude");
     expect(args).toEqual([
+      "--model",
+      "opus",
+      "--effort",
+      "max",
       "-p",
       "Create the skill",
       "--add-dir",
@@ -82,7 +94,7 @@ describe("buildHeadlessAgentCommand", () => {
     const [cmd, args] = buildHeadlessAgentCommand(
       "codex",
       "Research langchain and create a skill",
-      { addDirs: ["/tmp/library-repo"] },
+      { addDirs: ["/tmp/library-repo"], effort: "minimal" },
     );
 
     expect(cmd).toBe("codex");
@@ -92,6 +104,8 @@ describe("buildHeadlessAgentCommand", () => {
       "-s",
       "workspace-write",
       "--skip-git-repo-check",
+      "-c",
+      'model_reasoning_effort="minimal"',
       "--add-dir",
       "/tmp/library-repo",
       "Research langchain and create a skill",
@@ -107,9 +121,15 @@ describe("buildSteerableClaudeCommand", () => {
       cwd: "/tmp",
       prompt: "Create the skill",
       addDirs: ["/tmp/library-repo"],
+      model: "sonnet",
+      effort: "medium",
     });
 
     expect(cmd).toBe("claude");
+    expect(args).toContain("--model");
+    expect(args).toContain("sonnet");
+    expect(args).toContain("--effort");
+    expect(args).toContain("medium");
     expect(args).toContain("-p");
     expect(args).toContain("--input-format");
     expect(args).toContain("--output-format");
@@ -195,5 +215,55 @@ describe("parseClaudeStreamEvent", () => {
       },
     });
     expect(parseClaudeStreamEvent(line)).toBeNull();
+  });
+});
+
+describe("headless session chrome", () => {
+  it("shows steer-ready header for Claude interactive mode", () => {
+    expect(
+      formatHeadlessSessionHeader("claude", true, true),
+    ).toBe("claude · steer ready");
+  });
+
+  it("shows read-only header when terminal interaction is unavailable", () => {
+    expect(
+      formatHeadlessSessionHeader("codex", false, false),
+    ).toBe("codex · read-only");
+  });
+
+  it("renders steer controls when steering is available", () => {
+    expect(
+      formatHeadlessSessionFooter({
+        agent: "claude",
+        canInteract: true,
+        canSteer: true,
+        steeringMode: false,
+        inputBuffer: "",
+      }),
+    ).toContain("[s] steer");
+  });
+
+  it("explains when steering is unavailable", () => {
+    expect(
+      formatHeadlessSessionFooter({
+        agent: "codex",
+        canInteract: true,
+        canSteer: false,
+        steeringMode: false,
+        inputBuffer: "",
+      }),
+    ).toContain("steer available only with Claude");
+  });
+
+  it("renders steering composer text when steering mode is active", () => {
+    expect(
+      formatHeadlessSessionFooter({
+        agent: "claude",
+        canInteract: true,
+        canSteer: true,
+        steeringMode: true,
+        inputBuffer: "focus on docs",
+      }),
+    ).toContain("focus on docs");
   });
 });

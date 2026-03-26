@@ -5,9 +5,10 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, normalize, resolve as resolvePath } from "node:path";
 import { parse as yamlParse } from "yaml";
 import { runHeadlessAgentSession, type AIAgent } from "./ai-bridge.js";
 import { scanDirectory } from "./scanner.js";
@@ -29,6 +30,8 @@ export function extractRepoName(url: string): string {
 export interface GenerateOptions {
   projectDir: string;
   aiAgent: AIAgent;
+  agentModel?: string;
+  agentEffort?: string;
   skillName?: string;
   source:
     | {
@@ -67,6 +70,75 @@ export interface ClonedRepo {
   cloneDir: string;
   relPath: string;
   commitHash: string;
+}
+
+export interface ResolvedDocSources {
+  entries: string[];
+  webUrls: string[];
+  localDirs: string[];
+}
+
+export function partitionDocSources(docSources: string[]): Omit<ResolvedDocSources, "entries"> {
+  const webUrls: string[] = [];
+  const localDirs: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawSource of docSources) {
+    const source = rawSource.trim();
+    if (!source || seen.has(source)) continue;
+    seen.add(source);
+
+    if (isHttpUrl(source)) {
+      webUrls.push(source);
+    } else {
+      localDirs.push(source);
+    }
+  }
+
+  return { webUrls, localDirs };
+}
+
+export async function resolveDocSources(
+  docSources: string[],
+  baseDir: string,
+): Promise<ResolvedDocSources> {
+  const entries: string[] = [];
+  const webUrls: string[] = [];
+  const localDirs: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawSource of docSources) {
+    const source = rawSource.trim();
+    if (!source) continue;
+
+    if (isHttpUrl(source)) {
+      if (seen.has(source)) continue;
+      seen.add(source);
+      entries.push(source);
+      webUrls.push(source);
+      continue;
+    }
+
+    const resolvedDir = resolvePath(baseDir, source);
+    let sourceStats;
+
+    try {
+      sourceStats = await stat(resolvedDir);
+    } catch {
+      throw new Error(`Local docs directory "${source}" was not found.`);
+    }
+
+    if (!sourceStats.isDirectory()) {
+      throw new Error(`Local docs path "${source}" is not a directory.`);
+    }
+
+    if (seen.has(resolvedDir)) continue;
+    seen.add(resolvedDir);
+    entries.push(resolvedDir);
+    localDirs.push(resolvedDir);
+  }
+
+  return { entries, webUrls, localDirs };
 }
 
 /**
@@ -115,7 +187,7 @@ export async function cleanupClones(clones: ClonedRepo[]): Promise<void> {
 export async function generateSkill(
   options: GenerateOptions,
 ): Promise<GenerateResult> {
-  const { projectDir, aiAgent, skillName, source } = options;
+  const { projectDir, aiAgent, agentModel, agentEffort, skillName, source } = options;
   const log = options.onProgress ?? (() => {});
   await ensureGeneratedSkillsDir(projectDir);
   log(`Preparing isolated ${aiAgent} workspace...`);
@@ -137,7 +209,11 @@ export async function generateSkill(
       });
     }
 
-    const docUrls = source.docUrls ?? [];
+    const resolvedDocSources = await resolveDocSources(
+      source.docUrls ?? [],
+      projectDir,
+    );
+    const docUrls = resolvedDocSources.entries;
     const prompt = source.type === "topic"
       ? createTopicGenerationSessionPrompt(source.researchQuery, skillName, docUrls)
       : createDocsGenerationSessionPrompt(docUrls, skillName);
@@ -147,6 +223,9 @@ export async function generateSkill(
       agent: aiAgent,
       cwd: workspaceDir,
       prompt,
+      addDirs: resolvedDocSources.localDirs,
+      model: agentModel,
+      effort: agentEffort,
     });
 
     const skill = await syncGeneratedSkillFromWorkspace(
@@ -474,17 +553,13 @@ export function createDocsGenerationSessionPrompt(
   docUrls: string[],
   skillName?: string,
 ): string {
-  const urlList = docUrls.map((u) => `- ${u}`).join("\n");
-
   const target = skillName
     ? `Create a skill named "${skillName}" and write it to skills/${skillName}/.`
     : "Choose a concise kebab-case name and create the skill under skills/<name>/.";
 
   return [
-    "Create a self-contained skill package based on the following documentation:",
-    "",
-    urlList,
-    "",
+    "Create a self-contained skill package based on the following documentation sources:",
+    formatDocSourceSummary(docUrls),
     "Use your web browsing tools to thoroughly read these documentation websites.",
     "Use the installed skill-creator skill as guide.",
     "Cover the subject broadly but compress intelligently: keep high-signal concepts, setup rules, workflows, examples, configuration, and gotchas while removing repetition and low-value prose.",
@@ -500,15 +575,11 @@ export function createDocsUpdateSessionPrompt(
   skillName: string,
   docUrls: string[],
 ): string {
-  const urlList = docUrls.map((u) => `- ${u}`).join("\n");
-
   return [
     `Update the skill "${skillName}" in .cowboy/skills/${skillName}/.`,
-    "Re-read these documentation websites for any updates:",
-    "",
-    urlList,
-    "",
-    "Use your web browsing tools to read the documentation.",
+    "Re-read these documentation sources for any updates:",
+    formatDocSourceSummary(docUrls),
+    "Use your web browsing tools for websites and read local directories directly.",
     "Edit files in place. Keep the directory name and the frontmatter name aligned.",
     "After updating, create or update sources.yaml in the skill directory listing any GitHub repository URLs you used as primary sources. Format:\nrepos:\n  - https://github.com/org/repo",
   ].join("\n\n");
@@ -554,7 +625,11 @@ async function generateSkillFromRepos(
 ): Promise<GenerateResult> {
   const { projectDir, workspaceDir, aiAgent, skillName, source } = options;
   const log = options.onProgress ?? (() => {});
-  const docUrls = source.docUrls ?? [];
+  const resolvedDocSources = await resolveDocSources(
+    source.docUrls ?? [],
+    projectDir,
+  );
+  const docUrls = resolvedDocSources.entries;
 
   const clones = await cloneRepos(workspaceDir, source.libraryRepos, {
     log,
@@ -573,6 +648,9 @@ async function generateSkillFromRepos(
       agent: aiAgent,
       cwd: workspaceDir,
       prompt,
+      addDirs: resolvedDocSources.localDirs,
+      model: options.agentModel,
+      effort: options.agentEffort,
     });
 
     const skill = await syncGeneratedSkillFromWorkspace(
@@ -746,11 +824,42 @@ async function copyFileIfExists(sourcePath: string, destPath: string): Promise<v
 
 function appendDocsSection(lines: string[], docUrls?: string[]): void {
   if (!docUrls || docUrls.length === 0) return;
-  const urlList = docUrls.map((u) => `- ${u}`).join("\n");
+  const docsSummary = formatDocSourceSummary(docUrls);
   lines.push(
     "",
-    "Also consult these documentation websites as primary reference:",
-    urlList,
-    "Use your web browsing tools to read them.",
+    "Also consult these documentation sources as primary reference:",
+    docsSummary,
   );
+}
+
+function formatDocSourceSummary(docSources: string[]): string {
+  const { webUrls, localDirs } = partitionDocSources(docSources);
+  const sections: string[] = [];
+
+  if (webUrls.length > 0) {
+    sections.push([
+      "Documentation websites:",
+      webUrls.map((url) => `- ${url}`).join("\n"),
+      "Use your web browsing tools to read them.",
+    ].join("\n"));
+  }
+
+  if (localDirs.length > 0) {
+    sections.push([
+      "Local documentation directories:",
+      localDirs.map((dir) => `- ${dir}`).join("\n"),
+      "These directories are already accessible in the workspace. Read their files directly.",
+    ].join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

@@ -6,14 +6,22 @@ Initializes Cowboy in the current project.
 
 What it does:
 
-1. Creates `.cowboy/config.yaml`
-2. Creates the required agent directories
-3. Installs built-in skills such as `skill-creator`
-4. If only one agent is selected, stores it as `default_agent`
+1. Asks which agents should receive installed skills by default
+2. Asks which agent should generate and update skills by default
+3. Creates `.cowboy/config.yaml`
+4. Creates the required agent directories
+5. Installs built-in skills such as `skill-creator`
+6. Stores default Claude model/effort and Codex reasoning effort for future generation and update runs
 
 ## `cowboy install <github-url>`
 
-Scans a GitHub repo for `SKILL.md` files and installs the selected skills for the detected agents.
+Scans a GitHub repo for `SKILL.md` files and installs the selected skills.
+
+Install target behavior:
+
+1. Use `--install-for <agent>` if passed
+2. Otherwise use the configured agents from `.cowboy/config.yaml`
+3. Otherwise fall back to detected agent directories
 
 ## `cowboy generate [topic]`
 
@@ -28,12 +36,21 @@ Optional flags:
 
 - `--name <name>` to force the generated skill name
 - `--agent <agent>` to force `claude` or `codex`
+- `--claude-model <model>` to override Claude's model for the current run
+- `--effort <level>` to override the selected agent's thinking/reasoning effort for the current run
+- `--install-for <agent>` to choose which configured agents receive the generated skill
 
 Agent selection behavior:
 
 1. Use `--agent` if passed
 2. Otherwise use `default_agent` from `.cowboy/config.yaml` if present
-3. Otherwise prompt when multiple configured agents exist
+3. Otherwise prompt when multiple local agent CLIs are available
+
+Install target behavior:
+
+1. Use `--install-for <agent>` if passed
+2. Otherwise install for the configured agents in `.cowboy/config.yaml`
+3. Otherwise fall back to detected agent directories
 
 ## `cowboy update [name]`
 
@@ -43,6 +60,12 @@ Behavior depends on skill type:
 
 - Imported skills are refreshed deterministically from their source repo
 - Generated skills are refreshed through a real agent session
+
+Optional flags:
+
+- `--agent <agent>` to override which agent performs the update
+- `--claude-model <model>` to override Claude's model for that update run
+- `--effort <level>` to override the selected agent's thinking/reasoning effort
 
 ## `cowboy default-agent <agent>`
 

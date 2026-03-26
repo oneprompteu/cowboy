@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -57,6 +57,15 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("updateSkills", () => {
   it("updates generated skills in place and preserves installed_at", async () => {
@@ -323,18 +332,26 @@ describe("updateSkills", () => {
 
   it("updates docs-only generated skill by re-running agent", async () => {
     const today = new Date().toISOString().split("T")[0];
+    const localDocsDir = join(tempDir, "docs");
+    await mkdir(localDocsDir, { recursive: true });
 
     await installGeneratedSkill({
       skill: originalSkill,
       projectDir: tempDir,
       agents: ["claude"],
-      docUrls: ["https://docs.example.com"],
+      docUrls: ["https://docs.example.com", localDocsDir],
       installedAt: "2026-03-01",
       lastUpdated: "2026-03-05",
     });
 
-    sessionMock.mockImplementation(async ({ cwd, prompt }: { cwd: string; prompt: string }) => {
+    sessionMock.mockImplementation(async ({ cwd, prompt, addDirs }: {
+      cwd: string;
+      prompt: string;
+      addDirs?: string[];
+    }) => {
       expect(prompt).toContain("https://docs.example.com");
+      expect(prompt).toContain(localDocsDir);
+      expect(addDirs).toEqual([localDocsDir]);
 
       const skillDir = join(cwd, ".cowboy", "skills", "test-skill");
       await mkdir(skillDir, { recursive: true });
@@ -359,7 +376,7 @@ describe("updateSkills", () => {
     if (registry.skills[0].type === "generated") {
       expect(registry.skills[0].installed_at).toBe("2026-03-01");
       expect(registry.skills[0].last_updated).toBe(today);
-      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
+      expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com", localDocsDir]);
     }
   });
 
@@ -402,5 +419,54 @@ describe("updateSkills", () => {
     if (registry.skills[0].type === "generated") {
       expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
     }
+  });
+
+  it("keeps imported skills scoped to their recorded install targets during update", async () => {
+    await mkdir(join(tempDir, ".agents"), { recursive: true });
+
+    const importedSkill: ScannedSkill = {
+      name: "imported-skill",
+      description: "Imported skill",
+      rawContent:
+        '---\nname: imported-skill\ndescription: "Imported skill"\n---\n\n# Imported Skill\n\nOriginal content.',
+      body: "# Imported Skill\n\nOriginal content.",
+      relativePath: "skills/imported-skill/SKILL.md",
+      frontmatter: {
+        name: "imported-skill",
+        description: "Imported skill",
+      },
+    };
+
+    const { installSkill } = await import("../src/core/installer.js");
+    await installSkill({
+      skill: importedSkill,
+      projectDir: tempDir,
+      agents: ["claude"],
+      sourceRepo: "https://github.com/test/imported-repo",
+    });
+
+    cloneMock.mockImplementation(async (_repo: string, dir: string) => {
+      await mkdir(join(dir, "skills", "imported-skill"), { recursive: true });
+      await writeFile(
+        join(dir, "skills", "imported-skill", "SKILL.md"),
+        '---\nname: imported-skill\ndescription: "Imported skill updated"\n---\n\n# Imported Skill\n\nUpdated content.',
+        "utf-8",
+      );
+    });
+
+    const results = await updateSkills({ projectDir: tempDir });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].updated).toBe(true);
+
+    const registry = await readRegistry(tempDir);
+    expect(registry.skills[0].installed_for).toEqual(["claude"]);
+
+    expect(
+      await exists(join(tempDir, ".claude", "skills", "imported-skill", "SKILL.md")),
+    ).toBe(true);
+    expect(
+      await exists(join(tempDir, ".agents", "skills", "imported-skill", "SKILL.md")),
+    ).toBe(false);
   });
 });

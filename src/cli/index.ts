@@ -11,15 +11,20 @@ import { scanRepo } from "../core/scanner.js";
 import { detectAgentTypes } from "../core/detector.js";
 import { installSkill, installGeneratedSkill, uninstallSkill, enableSkill, disableSkill } from "../core/installer.js";
 import { findSkill, readRegistry } from "../core/tracker.js";
-import { generateSkill } from "../core/generator.js";
+import { generateSkill, resolveDocSources } from "../core/generator.js";
 import { updateSkills } from "../core/updater.js";
-import { isAgentAvailable, type AIAgent } from "../core/ai-bridge.js";
+import { detectAvailableAgents, isAgentAvailable, type AIAgent } from "../core/ai-bridge.js";
 import { loadBuiltinSkills } from "../core/builtins.js";
 import type { CowboyConfig, AgentType } from "../core/schemas.js";
+import { resolveInstallAgents } from "../core/agent-selection.js";
 import {
-  getConfiguredAgents,
+  CLAUDE_EFFORT_CHOICES,
+  CLAUDE_MODEL_CHOICES,
+  CODEX_EFFORT_CHOICES,
+  resolveAgentRuntimeOptions,
+} from "../core/agent-runtime.js";
+import {
   getDefaultConfiguredAgent,
-  getPreferredConfiguredAgent,
   setDefaultConfiguredAgent,
 } from "../core/config.js";
 
@@ -44,7 +49,7 @@ program
     ];
 
     const selected = await checkbox<AgentType>({
-      message: "Which agents do you use?",
+      message: "Which agents should Cowboy install skills for in this project?",
       choices: allAgents.map((a) => ({
         name: a.name,
         value: a.value,
@@ -56,6 +61,39 @@ program
       return;
     }
 
+    const defaultGenerationAgent = await select<AIAgent | "ask">({
+      message: "Which agent should Cowboy use by default to generate and update skills?",
+      choices: [
+        { name: "Claude Code", value: "claude" },
+        { name: "Codex", value: "codex" },
+        { name: "Ask each time", value: "ask" },
+      ],
+    });
+
+    const defaultClaudeModel = await select<string>({
+      message: "Default Claude model for generation and updates?",
+      choices: CLAUDE_MODEL_CHOICES.map((choice) => ({
+        name: choice.label,
+        value: choice.value,
+      })),
+    });
+
+    const defaultClaudeEffort = await select<string>({
+      message: "Default Claude thinking effort?",
+      choices: CLAUDE_EFFORT_CHOICES.map((choice) => ({
+        name: choice.label,
+        value: choice.value,
+      })),
+    });
+
+    const defaultCodexEffort = await select<string>({
+      message: "Default Codex reasoning effort?",
+      choices: CODEX_EFFORT_CHOICES.map((choice) => ({
+        name: choice.label,
+        value: choice.value,
+      })),
+    });
+
     // Create agent directories if they don't exist
     for (const agent of allAgents.filter((a) => selected.includes(a.value))) {
       await mkdir(join(projectDir, agent.dir), { recursive: true });
@@ -63,7 +101,18 @@ program
 
     const config: CowboyConfig = {
       agents: selected,
-      default_agent: selected.length === 1 ? selected[0] : undefined,
+      default_agent: defaultGenerationAgent === "ask"
+        ? undefined
+        : defaultGenerationAgent,
+      generation_defaults: {
+        claude: {
+          model: defaultClaudeModel === "default" ? undefined : defaultClaudeModel,
+          effort: defaultClaudeEffort === "default" ? undefined : defaultClaudeEffort as any,
+        },
+        codex: {
+          effort: defaultCodexEffort === "default" ? undefined : defaultCodexEffort as any,
+        },
+      },
     };
     const cowboyDir = join(projectDir, ".cowboy");
 
@@ -87,7 +136,30 @@ program
     }
 
     console.log(chalk.green("\nCowboy initialized."));
-    console.log(`Agents: ${selected.map((a) => chalk.cyan(a)).join(", ")}`);
+    console.log(`Install targets: ${selected.map((a) => chalk.cyan(a)).join(", ")}`);
+    console.log(
+      `Default generation agent: ${
+        config.default_agent ? chalk.cyan(config.default_agent) : chalk.dim("ask each time")
+      }`,
+    );
+    console.log(
+      `Claude defaults: model=${
+        config.generation_defaults?.claude?.model
+          ? chalk.cyan(config.generation_defaults.claude.model)
+          : chalk.dim("CLI default")
+      }, effort=${
+        config.generation_defaults?.claude?.effort
+          ? chalk.cyan(config.generation_defaults.claude.effort)
+          : chalk.dim("CLI default")
+      }`,
+    );
+    console.log(
+      `Codex defaults: effort=${
+        config.generation_defaults?.codex?.effort
+          ? chalk.cyan(config.generation_defaults.codex.effort)
+          : chalk.dim("CLI default")
+      }`,
+    );
     console.log(`Config written to ${chalk.dim(".cowboy/config.yaml")}`);
   });
 
@@ -97,14 +169,20 @@ program
   .command("install <github-url>")
   .description("Install skills from a GitHub repo")
   .option("--all", "Install all skills without prompting")
-  .action(async (url: string, opts: { all?: boolean }) => {
+  .option(
+    "--install-for <agent>",
+    "Install for a specific agent (repeatable, supports comma-separated values)",
+    (value: string, acc: string[]) => [...acc, value],
+    [] as string[],
+  )
+  .action(async (url: string, opts: { all?: boolean; installFor: string[] }) => {
     const projectDir = process.cwd();
-    const agents = await detectAgentTypes(projectDir);
+    let agents: AgentType[];
 
-    if (agents.length === 0) {
-      console.log(
-        chalk.yellow("No agents detected. Run 'cowboy init' first."),
-      );
+    try {
+      agents = await resolveInstallAgents(projectDir, opts.installFor);
+    } catch (error: any) {
+      console.log(chalk.yellow(error.message));
       return;
     }
 
@@ -300,14 +378,22 @@ program
   .description("Generate a new skill from library repos or free-text topic using AI")
   .argument("[topic...]", "Free-text topic query, e.g. langchain")
   .option("--repo <url>", "GitHub URL of the library/tool (repeatable)", (val: string, acc: string[]) => [...acc, val], [] as string[])
-  .option("--docs <url>", "Documentation URL (repeatable)", (val: string, acc: string[]) => [...acc, val], [] as string[])
+  .option("--docs <source>", "Documentation URL or local directory (repeatable)", (val: string, acc: string[]) => [...acc, val], [] as string[])
   .option("--name <name>", "Custom name for the skill")
   .option("--agent <agent>", "Agent to use for generation (claude or codex)")
-  .action(async (topicParts: string[] | undefined, opts: { repo: string[]; docs: string[]; name?: string; agent?: string }) => {
+  .option("--claude-model <model>", "Claude model override (for example: sonnet, opus, or claude-sonnet-4-6)")
+  .option("--effort <level>", "Reasoning/thinking effort override for the selected agent")
+  .option(
+    "--install-for <agent>",
+    "Install for a specific agent (repeatable, supports comma-separated values)",
+    (value: string, acc: string[]) => [...acc, value],
+    [] as string[],
+  )
+  .action(async (topicParts: string[] | undefined, opts: { repo: string[]; docs: string[]; name?: string; agent?: string; claudeModel?: string; effort?: string; installFor: string[] }) => {
     const projectDir = process.cwd();
     const topic = (topicParts ?? []).join(" ").trim() || undefined;
     const repos = opts.repo;
-    const docs = opts.docs;
+    let docs = opts.docs;
 
     if (repos.length > 0 && topic) {
       console.log(chalk.yellow("Use either --repo or a free-text topic, not both."));
@@ -316,8 +402,15 @@ program
 
     if (repos.length === 0 && !topic && docs.length === 0) {
       console.log(
-        chalk.yellow("Provide --repo <url>, --docs <url>, or a free-text topic such as 'langchain'."),
+        chalk.yellow("Provide --repo <url>, --docs <source>, or a free-text topic such as 'langchain'."),
       );
+      return;
+    }
+
+    try {
+      docs = (await resolveDocSources(docs, projectDir)).entries;
+    } catch (err: any) {
+      console.log(chalk.red(err.message));
       return;
     }
 
@@ -329,10 +422,14 @@ program
       return;
     }
 
-    if (!aiAgent) {
-      console.log(
-        chalk.yellow("No configured agent found. Run 'cowboy init' first."),
-      );
+    let runtimeOptions;
+    try {
+      runtimeOptions = await resolveAgentRuntimeOptions(projectDir, aiAgent, {
+        claudeModel: opts.claudeModel,
+        effort: opts.effort,
+      });
+    } catch (err: any) {
+      console.log(chalk.red(err.message));
       return;
     }
 
@@ -356,11 +453,19 @@ program
     if (repos.length > 0) {
       sourceLabel = `${repos.length} repo(s)`;
     } else if (docs.length > 0 && !topic) {
-      sourceLabel = `${docs.length} doc(s)`;
+      sourceLabel = `${docs.length} doc source(s)`;
     } else {
       sourceLabel = `topic "${topic}"`;
     }
     console.log(chalk.dim(`Using ${aiAgent} to generate skill from ${sourceLabel}...`));
+
+    let installAgents: AgentType[];
+    try {
+      installAgents = await resolveInstallAgents(projectDir, opts.installFor);
+    } catch (err: any) {
+      console.log(chalk.red(err.message));
+      return;
+    }
 
     try {
       let source: Parameters<typeof generateSkill>[0]["source"];
@@ -375,14 +480,12 @@ program
       const { skill, sources, docUrls } = await generateSkill({
         projectDir,
         aiAgent,
+        agentModel: runtimeOptions.model,
+        agentEffort: runtimeOptions.effort,
         skillName: opts.name,
         source,
         onProgress: (msg) => console.log(chalk.dim(msg)),
       });
-      const configuredAgents = await getConfiguredAgents(projectDir);
-      const installAgents = configuredAgents.length > 0
-        ? configuredAgents
-        : [aiAgent];
 
       const results = await installGeneratedSkill({
         skill,
@@ -408,7 +511,10 @@ program
 program
   .command("update [name]")
   .description("Update installed skills (all or by name)")
-  .action(async (name?: string) => {
+  .option("--agent <agent>", "Agent to use for updating generated skills (claude or codex)")
+  .option("--claude-model <model>", "Claude model override for updates")
+  .option("--effort <level>", "Reasoning/thinking effort override for updates")
+  .action(async (name: string | undefined, opts: { agent?: string; claudeModel?: string; effort?: string }) => {
     const projectDir = process.cwd();
     const registry = await readRegistry(projectDir);
 
@@ -427,23 +533,22 @@ program
       : registry.skills;
     const needsAIAgent = targetSkills.some((skill) => skill.type === "generated");
     let aiAgent: AIAgent | undefined;
+    let runtimeOptions:
+      | {
+          model?: string;
+          effort?: string;
+        }
+      | undefined;
 
     if (needsAIAgent) {
-      aiAgent = await getConfiguredAgent(projectDir) ?? undefined;
-
-      if (!aiAgent) {
-        console.log(
-          chalk.yellow("No configured agent found. Run 'cowboy init' first."),
-        );
-        return;
-      }
-
-      if (!await isAgentAvailable(aiAgent)) {
-        console.log(
-          chalk.red(
-            `Configured agent CLI not found for ${aiAgent}. Install ${getAgentInstallHint(aiAgent)}.`,
-          ),
-        );
+      try {
+        aiAgent = await resolveGenerateAgent(projectDir, opts.agent);
+        runtimeOptions = await resolveAgentRuntimeOptions(projectDir, aiAgent, {
+          claudeModel: opts.claudeModel,
+          effort: opts.effort,
+        });
+      } catch (err: any) {
+        console.log(chalk.red(err.message));
         return;
       }
     }
@@ -456,6 +561,8 @@ program
         projectDir,
         skillName: name,
         aiAgent: aiAgent ?? undefined,
+        agentModel: runtimeOptions?.model,
+        agentEffort: runtimeOptions?.effort,
         onProgress: (msg) => console.log(chalk.dim(msg)),
       });
 
@@ -507,21 +614,10 @@ program
 
 program.parse();
 
-async function getConfiguredAgent(projectDir: string): Promise<AIAgent | null> {
-  const agent = await getPreferredConfiguredAgent(projectDir);
-  return agent;
-}
-
 async function resolveGenerateAgent(
   projectDir: string,
   requestedAgent?: string,
 ): Promise<AIAgent> {
-  const configuredAgents = await getConfiguredAgents(projectDir);
-
-  if (configuredAgents.length === 0) {
-    throw new Error("No configured agent found. Run 'cowboy init' first.");
-  }
-
   if (requestedAgent) {
     const agent = parseAgentType(requestedAgent);
     if (!agent) {
@@ -530,25 +626,28 @@ async function resolveGenerateAgent(
       );
     }
 
-    if (!configuredAgents.includes(agent)) {
-      throw new Error(`Agent "${agent}" is not configured in this project.`);
-    }
-
     return agent;
   }
 
-  if (configuredAgents.length === 1) {
-    return configuredAgents[0];
+  const defaultAgent = await getDefaultConfiguredAgent(projectDir);
+  if (defaultAgent) {
+    return defaultAgent;
   }
 
-  const defaultAgent = await getDefaultConfiguredAgent(projectDir);
-  if (defaultAgent && configuredAgents.includes(defaultAgent)) {
-    return defaultAgent;
+  const availableAgents = await detectAvailableAgents();
+  if (availableAgents.length === 0) {
+    throw new Error(
+      "No AI agent CLI found. Install Claude Code or Codex, or set --agent explicitly.",
+    );
+  }
+
+  if (availableAgents.length === 1) {
+    return availableAgents[0];
   }
 
   return await select<AIAgent>({
     message: "Which agent should generate this skill?",
-    choices: configuredAgents.map((agent) => ({
+    choices: availableAgents.map((agent) => ({
       name: formatAgentLabel(agent),
       value: agent,
     })),

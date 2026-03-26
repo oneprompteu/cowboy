@@ -12,6 +12,7 @@ import {
   createTopicGenerationSessionPrompt,
   ensureGeneratedSkillSource,
   parseSourcesYaml,
+  resolveDocSources,
   resolveGeneratedSkill,
   scanGeneratedSkills,
 } from "../src/core/generator.js";
@@ -322,13 +323,14 @@ describe("docs prompts", () => {
 
   it("builds a docs-only generation prompt", () => {
     const prompt = createDocsGenerationSessionPrompt(
-      ["https://docs.langchain.com", "https://python.langchain.com/docs/"],
+      ["https://docs.langchain.com", "/tmp/langchain-docs"],
       "langchain",
     );
 
     expect(prompt).toContain("https://docs.langchain.com");
-    expect(prompt).toContain("https://python.langchain.com/docs/");
+    expect(prompt).toContain("/tmp/langchain-docs");
     expect(prompt).toContain("web browsing tools");
+    expect(prompt).toContain("Local documentation directories");
     expect(prompt).toContain("langchain");
     expect(prompt).toContain("sources.yaml");
   });
@@ -341,6 +343,17 @@ describe("docs prompts", () => {
     expect(prompt).toContain('Update the skill "langchain"');
     expect(prompt).toContain("https://docs.langchain.com");
     expect(prompt).toContain("web browsing tools");
+  });
+
+  it("repo prompt includes local docs directories when provided", () => {
+    const prompt = createRepoGenerationSessionPrompt(
+      "repos/langchain",
+      "langchain",
+      ["/tmp/langchain-docs"],
+    );
+
+    expect(prompt).toContain("/tmp/langchain-docs");
+    expect(prompt).toContain("Read their files directly");
   });
 
   it("repo update prompt includes doc URLs when provided", () => {
@@ -373,6 +386,34 @@ describe("docs prompts", () => {
 
     expect(prompt).not.toContain("web browsing tools");
     expect(prompt).not.toContain("documentation websites");
+  });
+});
+
+describe("resolveDocSources", () => {
+  it("preserves web URLs and resolves local directories to absolute paths", async () => {
+    const localDocsDir = join(tempDir, "local-docs");
+    await mkdir(localDocsDir, { recursive: true });
+
+    const resolved = await resolveDocSources(
+      ["https://docs.example.com", "./local-docs"],
+      tempDir,
+    );
+
+    expect(resolved.entries).toEqual([
+      "https://docs.example.com",
+      localDocsDir,
+    ]);
+    expect(resolved.webUrls).toEqual(["https://docs.example.com"]);
+    expect(resolved.localDirs).toEqual([localDocsDir]);
+  });
+
+  it("rejects local doc paths that are files", async () => {
+    const localFile = join(tempDir, "notes.md");
+    await writeFile(localFile, "# Notes\n", "utf-8");
+
+    await expect(
+      resolveDocSources(["./notes.md"], tempDir),
+    ).rejects.toThrow('Local docs path "./notes.md" is not a directory.');
   });
 });
 

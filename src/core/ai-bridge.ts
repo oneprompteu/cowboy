@@ -10,6 +10,8 @@ export interface InteractiveSessionOptions {
   cwd: string;
   prompt: string;
   addDirs?: string[];
+  model?: string;
+  effort?: string;
 }
 
 /**
@@ -36,6 +38,18 @@ export async function detectAvailableAgent(): Promise<AIAgent | null> {
   return null;
 }
 
+export async function detectAvailableAgents(): Promise<AIAgent[]> {
+  const available: AIAgent[] = [];
+
+  for (const agent of ["claude", "codex"] as const) {
+    if (await isAgentAvailable(agent)) {
+      available.push(agent);
+    }
+  }
+
+  return available;
+}
+
 /**
  * Build the command used to launch an interactive AI session.
  * The prompt is passed positionally so the CLI starts in agent mode.
@@ -45,12 +59,20 @@ export function buildInteractiveAgentCommand(
   prompt: string,
   options: {
     addDirs?: string[];
+    model?: string;
+    effort?: string;
   } = {},
 ): [string, string[]] {
   const args: string[] = [];
   const addDirs = options.addDirs ?? [];
 
   if (agent === "claude") {
+    if (options.model) {
+      args.push("--model", options.model);
+    }
+    if (options.effort) {
+      args.push("--effort", options.effort);
+    }
     args.push(prompt);
 
     for (const dir of addDirs) {
@@ -62,6 +84,9 @@ export function buildInteractiveAgentCommand(
 
   if (agent === "codex") {
     args.push("-s", "workspace-write");
+    if (options.effort) {
+      args.push("-c", `model_reasoning_effort="${options.effort}"`);
+    }
   }
 
   for (const dir of addDirs) {
@@ -84,6 +109,8 @@ export async function runInteractiveAgentSession(
     options.prompt,
     {
       addDirs: options.addDirs ?? [],
+      model: options.model,
+      effort: options.effort,
     },
   );
 
@@ -114,12 +141,20 @@ export function buildHeadlessAgentCommand(
   prompt: string,
   options: {
     addDirs?: string[];
+    model?: string;
+    effort?: string;
   } = {},
 ): [string, string[]] {
   const args: string[] = [];
   const addDirs = options.addDirs ?? [];
 
   if (agent === "claude") {
+    if (options.model) {
+      args.push("--model", options.model);
+    }
+    if (options.effort) {
+      args.push("--effort", options.effort);
+    }
     args.push("-p", prompt);
 
     for (const dir of addDirs) {
@@ -131,6 +166,9 @@ export function buildHeadlessAgentCommand(
 
   // Codex: use exec mode for non-interactive operation
   args.push("exec", "--full-auto", "-s", "workspace-write", "--skip-git-repo-check");
+  if (options.effort) {
+    args.push("-c", `model_reasoning_effort="${options.effort}"`);
+  }
 
   for (const dir of addDirs) {
     args.push("--add-dir", dir);
@@ -174,15 +212,63 @@ export function parseClaudeStreamEvent(line: string): string | null {
 export function buildSteerableClaudeCommand(
   options: InteractiveSessionOptions,
 ): [string, string[]] {
-  const args = [
+  const args: string[] = [];
+  if (options.model) {
+    args.push("--model", options.model);
+  }
+  if (options.effort) {
+    args.push("--effort", options.effort);
+  }
+  args.push(
     "-p", options.prompt,
     "--input-format", "stream-json",
     "--output-format", "stream-json",
-  ];
+  );
   for (const dir of options.addDirs ?? []) {
     args.push("--add-dir", dir);
   }
   return ["claude", args];
+}
+
+export function formatHeadlessSessionHeader(
+  agent: AIAgent,
+  canInteract: boolean,
+  canSteer: boolean,
+): string {
+  if (!canInteract) {
+    return `${agent} · read-only`;
+  }
+
+  if (canSteer) {
+    return `${agent} · steer ready`;
+  }
+
+  return `${agent} · interactive`;
+}
+
+export function formatHeadlessSessionFooter(
+  options: {
+    agent: AIAgent;
+    canInteract: boolean;
+    canSteer: boolean;
+    steeringMode: boolean;
+    inputBuffer: string;
+  },
+): string {
+  if (!options.canInteract) {
+    return "Output only  |  interactive controls unavailable in this terminal";
+  }
+
+  if (options.steeringMode) {
+    const prompt = options.inputBuffer || "type a message";
+    return `Steer  |  ${prompt}  |  Enter send  |  Esc back`;
+  }
+
+  if (options.canSteer) {
+    return "Controls  |  [c] cancel  |  [s] steer";
+  }
+
+  return `Controls  |  [c] cancel  |  steer available only with Claude`;
 }
 
 /**
@@ -210,6 +296,8 @@ export async function runHeadlessAgentSession(
     ? buildSteerableClaudeCommand(options)
     : buildHeadlessAgentCommand(options.agent, options.prompt, {
         addDirs: options.addDirs ?? [],
+        model: options.model,
+        effort: options.effort,
       });
 
   // Terminal cleanup
@@ -235,16 +323,20 @@ export async function runHeadlessAgentSession(
     process.stdout.write("\n".repeat(reserveLines));
 
     // Header (dim)
-    const agentLabel = ` ${options.agent} `;
+    const agentLabel = ` ${formatHeadlessSessionHeader(options.agent, canInteract, canSteer)} `;
     const ruleLen = Math.max(0, cols - agentLabel.length);
     const rule = "─".repeat(ruleLen);
     process.stdout.write(`\x1b[${headerRow};1H`);
     process.stdout.write(`${DIM}${agentLabel}${rule}${RESET}`);
 
     // Footer (foreground, not dim)
-    const controlsText = canSteer
-      ? "c cancel · s steer"
-      : "c cancel";
+    const controlsText = formatHeadlessSessionFooter({
+      agent: options.agent,
+      canInteract,
+      canSteer,
+      steeringMode: false,
+      inputBuffer: "",
+    });
     process.stdout.write(`\x1b[${footerRow};1H\x1b[2K${controlsText}`);
 
     // Scroll region (between header and footer)
@@ -299,11 +391,13 @@ export async function runHeadlessAgentSession(
 
       const drawFooter = () => {
         if (!canInteract) return;
-        const content = steeringMode
-          ? `> ${inputBuffer}`
-          : canSteer
-            ? "c cancel · s steer"
-            : "c cancel";
+        const content = formatHeadlessSessionFooter({
+          agent: options.agent,
+          canInteract,
+          canSteer,
+          steeringMode,
+          inputBuffer,
+        });
         process.stdout.write(
           `\x1b7\x1b[${footerRow};1H\x1b[2K${content}\x1b8`,
         );

@@ -8,7 +8,7 @@ This avoids generating text to stdout and reparsing it later. The agent writes r
 
 ## Installed locations
 
-Cowboy adapts the canonical skill for the configured agent:
+Cowboy adapts the canonical skill for the configured install targets:
 
 - Claude Code:
   - `.claude/skills/<name>/SKILL.md`

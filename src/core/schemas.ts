@@ -49,18 +49,45 @@ export const AgentType = z
   .transform((value) => value === "claude-code" ? "claude" : value);
 export type AgentType = z.infer<typeof AgentType>;
 
+export const ClaudeEffortSchema = z.union([
+  z.literal("low"),
+  z.literal("medium"),
+  z.literal("high"),
+  z.literal("max"),
+]);
+export type ClaudeEffort = z.infer<typeof ClaudeEffortSchema>;
+
+export const CodexReasoningEffortSchema = z.union([
+  z.literal("none"),
+  z.literal("minimal"),
+  z.literal("low"),
+  z.literal("medium"),
+  z.literal("high"),
+  z.literal("xhigh"),
+]);
+export type CodexReasoningEffort = z.infer<typeof CodexReasoningEffortSchema>;
+
+export const ClaudeGenerationDefaultsSchema = z.object({
+  model: z.string().min(1).optional(),
+  effort: ClaudeEffortSchema.optional(),
+});
+export type ClaudeGenerationDefaults = z.infer<typeof ClaudeGenerationDefaultsSchema>;
+
+export const CodexGenerationDefaultsSchema = z.object({
+  effort: CodexReasoningEffortSchema.optional(),
+});
+export type CodexGenerationDefaults = z.infer<typeof CodexGenerationDefaultsSchema>;
+
 // --- .cowboy/config.yaml ---
 
 export const CowboyConfigSchema = z.object({
   agents: z.array(AgentType),
   default_agent: AgentType.optional(),
-}).refine(
-  (config) => !config.default_agent || config.agents.includes(config.default_agent),
-  {
-    message: "default_agent must be one of the configured agents",
-    path: ["default_agent"],
-  },
-);
+  generation_defaults: z.object({
+    claude: ClaudeGenerationDefaultsSchema.optional(),
+    codex: CodexGenerationDefaultsSchema.optional(),
+  }).optional(),
+});
 
 export type CowboyConfig = z.infer<typeof CowboyConfigSchema>;
 
@@ -91,7 +118,7 @@ export const GeneratedSkillSchema = InstalledSkillBase.extend({
   type: z.literal("generated"),
   research_query: z.string().min(1).optional(),
   sources: z.array(SkillSourceSchema).optional(),
-  doc_urls: z.array(z.string().url()).optional(),
+  doc_urls: z.array(z.string().min(1)).optional(),
   last_updated: z.string(),
 }).refine(
   (skill) => Boolean(

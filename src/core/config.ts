@@ -5,6 +5,8 @@ import {
   CowboyConfigSchema,
   type CowboyConfig,
   type AgentType,
+  type ClaudeGenerationDefaults,
+  type CodexGenerationDefaults,
 } from "./schemas.js";
 
 const COWBOY_CONFIG_PATH = [".cowboy", "config.yaml"] as const;
@@ -51,12 +53,7 @@ export async function getPreferredConfiguredAgent(
   projectDir: string,
 ): Promise<AgentType | null> {
   const config = await readCowboyConfig(projectDir);
-
-  if (!config) {
-    return null;
-  }
-
-  return config.default_agent ?? config.agents[0] ?? null;
+  return config?.default_agent ?? null;
 }
 
 export async function setDefaultConfiguredAgent(
@@ -68,10 +65,6 @@ export async function setDefaultConfiguredAgent(
     throw new Error("Cowboy is not initialized in this project.");
   }
 
-  if (!config.agents.includes(agent)) {
-    throw new Error(`Agent "${agent}" is not configured in this project.`);
-  }
-
   const nextConfig: CowboyConfig = {
     ...config,
     default_agent: agent,
@@ -79,4 +72,18 @@ export async function setDefaultConfiguredAgent(
 
   await writeCowboyConfig(projectDir, nextConfig);
   return nextConfig;
+}
+
+export async function getClaudeGenerationDefaults(
+  projectDir: string,
+): Promise<ClaudeGenerationDefaults | null> {
+  const config = await readCowboyConfig(projectDir);
+  return config?.generation_defaults?.claude ?? null;
+}
+
+export async function getCodexGenerationDefaults(
+  projectDir: string,
+): Promise<CodexGenerationDefaults | null> {
+  const config = await readCowboyConfig(projectDir);
+  return config?.generation_defaults?.codex ?? null;
 }
