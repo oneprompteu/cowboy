@@ -7,6 +7,7 @@ import { readRegistry } from "./tracker.js";
 import { scanDirectory } from "./scanner.js";
 import { installSkill, installGeneratedSkill } from "./installer.js";
 import { type AIAgent, runInteractiveAgentSession } from "./ai-bridge.js";
+import { loadBuiltinSkills } from "./builtins.js";
 import {
   cloneRepos,
   cleanupClones,
@@ -61,9 +62,12 @@ export async function updateSkills(
 
   for (const skill of skills) {
     if (skill.type === "imported") {
-      log(`Checking ${skill.name} (imported)...`);
+      const isBuiltin = skill.source_repo === "builtin";
+      log(`Checking ${skill.name} (${isBuiltin ? "builtin" : "imported"})...`);
       results.push(
-        await updateImportedSkill(skill, projectDir, log),
+        await (isBuiltin
+          ? updateBuiltinSkill(skill, projectDir)
+          : updateImportedSkill(skill, projectDir, log)),
       );
       continue;
     }
@@ -84,6 +88,22 @@ export async function updateSkills(
   return results;
 }
 
+async function updateBuiltinSkill(
+  skill: ImportedSkill,
+  projectDir: string,
+): Promise<UpdateResult> {
+  const builtins = await loadBuiltinSkills();
+  const updated = builtins.find((entry) => entry.name === skill.name);
+
+  return await finalizeImportedSkillUpdate(
+    skill,
+    updated,
+    projectDir,
+    "Built-in skill no longer exists",
+    "Updated built-in skill",
+  );
+}
+
 async function updateImportedSkill(
   skill: ImportedSkill,
   projectDir: string,
@@ -100,41 +120,57 @@ async function updateImportedSkill(
     const scanned = await scanDirectory(tempDir);
     const updated = scanned.find((entry) => entry.name === skill.name);
 
-    if (!updated) {
-      return {
-        name: skill.name,
-        type: "imported",
-        updated: false,
-        reason: "Skill no longer exists in source repo",
-      };
-    }
-
-    const newHash = hashSkill(updated);
-    if (newHash === skill.content_hash) {
-      return {
-        name: skill.name,
-        type: "imported",
-        updated: false,
-        reason: "Already up to date",
-      };
-    }
-
-    await installSkill({
-      skill: updated,
+    return await finalizeImportedSkillUpdate(
+      skill,
+      updated,
       projectDir,
-      agents: skill.installed_for,
-      sourceRepo: skill.source_repo,
-    });
-
-    return {
-      name: skill.name,
-      type: "imported",
-      updated: true,
-      reason: "Updated from source",
-    };
+      "Skill no longer exists in source repo",
+      "Updated from source",
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function finalizeImportedSkillUpdate(
+  skill: ImportedSkill,
+  updated: ScannedSkill | undefined,
+  projectDir: string,
+  missingReason: string,
+  updatedReason: string,
+): Promise<UpdateResult> {
+  if (!updated) {
+    return {
+      name: skill.name,
+      type: "imported",
+      updated: false,
+      reason: missingReason,
+    };
+  }
+
+  const newHash = hashSkill(updated);
+  if (newHash === skill.content_hash) {
+    return {
+      name: skill.name,
+      type: "imported",
+      updated: false,
+      reason: "Already up to date",
+    };
+  }
+
+  await installSkill({
+    skill: updated,
+    projectDir,
+    agents: skill.installed_for,
+    sourceRepo: skill.source_repo,
+  });
+
+  return {
+    name: skill.name,
+    type: "imported",
+    updated: true,
+    reason: updatedReason,
+  };
 }
 
 async function updateGeneratedSkill(

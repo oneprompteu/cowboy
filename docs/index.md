@@ -1,4 +1,4 @@
-# Cowboy
+# 🤠 cowboy
 
 Cowboy installs, generates, and updates skills for AI coding agents.
 
@@ -37,25 +37,40 @@ cowboy generate langchain
 # Generate from a repo
 cowboy generate --repo https://github.com/microsoft/playwright
 
+# Generate from docs only
+cowboy generate --docs https://playwright.dev/docs/intro
+cowboy generate --docs ~/docs/playwright
+
+# Combine repo and docs sources
+cowboy generate --repo https://github.com/microsoft/playwright --docs https://playwright.dev/docs/intro
+
 # Generate with one agent and install for another
 cowboy generate --repo https://github.com/microsoft/playwright --agent codex --install-for claude
 
 # Override runtime settings for a single run
 cowboy generate --repo https://github.com/anthropics/anthropic-sdk-typescript --agent claude --claude-model sonnet --effort max
+
+# Toggle a skill without deleting it
+cowboy disable playwright-testing --agent codex
+cowboy enable playwright-testing --agent codex
 ```
 
 ## Core idea
 
-Generated skills are authored as real files in the project under `.cowboy/skills/<name>/`.
+Cowboy keeps a canonical project-local copy of each skill under `.cowboy/skills/<name>/`.
+
+Generated skills are authored there and then installed for the configured agents.
 
 Cowboy then installs those files for the configured destination agents:
 
 - Claude Code: `.claude/skills/<name>/`
 - Codex: `.agents/skills/<name>/`
 
+This lets Cowboy support cross-agent installs, updates, and per-agent enable/disable without duplicating the package definition.
+
 ## Documentation map
 
 - [Commands](commands.md) for the CLI surface
-- [Generation](generation.md) for repo/topic generation behavior
+- [Generation](generation.md) for repo, docs, and topic generation behavior
 - [Architecture](architecture.md) for storage layout and source of truth
 - [Maintainers](maintainers.md) for repository governance, CI, and release operations

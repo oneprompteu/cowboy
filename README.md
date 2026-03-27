@@ -1,5 +1,5 @@
 <p align="center" style="margin: 0 0 8px 0;">
-  <img src="./assets/cowboys.png" alt="Cowboy cover art" width="92%" />
+  <img src="https://raw.githubusercontent.com/oneprompteu/cowboy/main/assets/cowboys.png" alt="Cowboy cover art" width="92%" />
 </p>
 
 <h1 align="center" style="margin: 0; font-size: 4rem; line-height: 1;">🤠 cowboy</h1>
@@ -11,7 +11,7 @@ Cowboy helps you create, install, and update AI agent skills with simple command
 </p>
 
 <p align="center" style="margin: 8px 0 0 0;">
-  <a href="./docs/index.md"><strong>Documentation</strong></a> · <strong>MIT License</strong>
+  <a href="https://github.com/oneprompteu/cowboy/tree/main/docs"><strong>Documentation</strong></a> · <strong>MIT License</strong>
 </p>
 
 ---
@@ -151,9 +151,16 @@ No drift. No duplication. No manual copy-paste.
 npm install -g cowboy-cli
 ```
 
+For a project-local install:
+
+```bash
+npm install cowboy-cli
+npx cowboy
+```
+
 ## Requirements
 
-* Node.js `>= 18`
+* Node.js `>= 20.12.0`
 * At least one supported agent CLI:
 
   * Claude Code
@@ -168,9 +175,9 @@ The published package name is `cowboy-cli`, and the executable is `cowboy`.
 ```bash
 cowboy init
 cowboy install https://github.com/ComposioHQ/awesome-claude-skills
-cowboy generate playwright testing
-cowboy update
+cowboy generate deepagents
 cowboy list
+cowboy update
 ```
 
 ---
@@ -181,7 +188,6 @@ cowboy list
 
 ```bash
 cowboy install https://github.com/ComposioHQ/awesome-claude-skills
-cowboy install https://github.com/ComposioHQ/awesome-claude-skills --install-for codex
 cowboy install <repo> --install-for claude --install-for codex
 ```
 
@@ -190,11 +196,10 @@ cowboy install <repo> --install-for claude --install-for codex
 ## Generate skills automatically
 
 ```bash
-cowboy generate langchain retrieval
+cowboy generate langchain
 cowboy generate --repo https://github.com/langchain-ai/deepagents
 cowboy generate --docs https://playwright.dev/docs/intro
-cowboy generate --docs ~/docs/playwright
-cowboy generate --docs https://playwright.dev/docs/intro --docs ~/docs/playwright
+cowboy generate --docs ~/docs
 ```
 
 `--docs` now accepts either a documentation URL or a local directory path. Local directories are exposed directly to the agent session so it can build the skill from files on disk as well as web docs.

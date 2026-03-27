@@ -12,10 +12,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && cp -r src/skills dist/skills",
+    "build": "rm -rf dist && tsc && cp -r src/skills dist/skills",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run test && npm run build"
   },
   "repository": {
     "type": "git",

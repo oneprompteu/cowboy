@@ -2,9 +2,12 @@
 
 ## Source of truth
 
-For generated skills, `.cowboy/skills/<name>/` is the canonical source of truth.
+Cowboy keeps a canonical project-local copy of each installed skill under `.cowboy/skills/<name>/`.
 
-This avoids generating text to stdout and reparsing it later. The agent writes real files directly where Cowboy expects them.
+For generated skills, that directory is the long-lived source of truth.
+Cowboy avoids generating text to stdout and reparsing it later. The agent writes real files directly where Cowboy expects them.
+
+Imported skills are also copied there so Cowboy can support `enable` and `disable` without re-fetching the source repository.
 
 ## Installed locations
 
@@ -22,13 +25,24 @@ Cowboy only manages project-local agent directories. User-level Codex skill dire
 
 Installed skills are tracked in `.cowboy/installed.yaml`.
 
+Imported skills store:
+
+- `source_repo`
+- `source_path`
+- `content_hash`
+- `installed_at`
+- `installed_for`
+- `disabled_for`
+
 Generated skills store:
 
-- `library_repo` when they come from `--repo`
+- `sources` when the agent or install flow has concrete GitHub repositories
+- `doc_urls` when the skill was generated or updated from documentation URLs or local docs directories
 - `research_query` when they come from a free-text topic
 - `installed_at`
 - `last_updated`
 - `installed_for`
+- `disabled_for`
 
 ## Built-in skills
 

@@ -3,12 +3,13 @@ import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { cloneMock, logMock, revparseMock, diffMock, sessionMock } = vi.hoisted(() => ({
+const { cloneMock, logMock, revparseMock, diffMock, sessionMock, loadBuiltinSkillsMock } = vi.hoisted(() => ({
   cloneMock: vi.fn(),
   logMock: vi.fn(),
   revparseMock: vi.fn(),
   diffMock: vi.fn(),
   sessionMock: vi.fn(),
+  loadBuiltinSkillsMock: vi.fn(),
 }));
 
 vi.mock("simple-git", () => ({
@@ -21,6 +22,10 @@ vi.mock("simple-git", () => ({
 
 vi.mock("../src/core/ai-bridge.js", () => ({
   runInteractiveAgentSession: sessionMock,
+}));
+
+vi.mock("../src/core/builtins.js", () => ({
+  loadBuiltinSkills: loadBuiltinSkillsMock,
 }));
 
 import { installGeneratedSkill } from "../src/core/installer.js";
@@ -50,6 +55,7 @@ beforeEach(async () => {
   revparseMock.mockReset();
   diffMock.mockReset();
   sessionMock.mockReset();
+  loadBuiltinSkillsMock.mockReset();
   revparseMock.mockResolvedValue("newcommithash123\n");
   cloneMock.mockResolvedValue(undefined);
 });
@@ -468,5 +474,61 @@ describe("updateSkills", () => {
     expect(
       await exists(join(tempDir, ".agents", "skills", "imported-skill", "SKILL.md")),
     ).toBe(false);
+  });
+
+  it("updates built-in skills without cloning a source repo", async () => {
+    await mkdir(join(tempDir, ".agents"), { recursive: true });
+
+    const builtinSkill: ScannedSkill = {
+      name: "builtin-skill",
+      description: "Built-in skill",
+      rawContent:
+        '---\nname: builtin-skill\ndescription: "Built-in skill"\n---\n\n# Built-in Skill\n\nOriginal content.',
+      body: "# Built-in Skill\n\nOriginal content.",
+      relativePath: "builtins/builtin-skill/SKILL.md",
+      frontmatter: {
+        name: "builtin-skill",
+        description: "Built-in skill",
+      },
+    };
+
+    const { installSkill } = await import("../src/core/installer.js");
+    await installSkill({
+      skill: builtinSkill,
+      projectDir: tempDir,
+      agents: ["codex"],
+      sourceRepo: "builtin",
+    });
+
+    loadBuiltinSkillsMock.mockResolvedValue([
+      {
+        ...builtinSkill,
+        description: "Built-in skill updated",
+        rawContent:
+          '---\nname: builtin-skill\ndescription: "Built-in skill updated"\n---\n\n# Built-in Skill\n\nUpdated content.',
+        body: "# Built-in Skill\n\nUpdated content.",
+        frontmatter: {
+          name: "builtin-skill",
+          description: "Built-in skill updated",
+        },
+      },
+    ]);
+
+    const results = await updateSkills({ projectDir: tempDir });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].updated).toBe(true);
+    expect(results[0].reason).toBe("Updated built-in skill");
+    expect(cloneMock).not.toHaveBeenCalled();
+
+    const registry = await readRegistry(tempDir);
+    expect(registry.skills[0].installed_for).toEqual(["codex"]);
+
+    expect(
+      await readFile(
+        join(tempDir, ".agents", "skills", "builtin-skill", "SKILL.md"),
+        "utf-8",
+      ),
+    ).toContain("Built-in skill updated");
   });
 });
