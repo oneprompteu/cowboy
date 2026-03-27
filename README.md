@@ -1,8 +1,8 @@
 <p align="center" style="margin: 0 0 8px 0;">
-  <img src="https://raw.githubusercontent.com/oneprompteu/cowboy/main/assets/cowboys.png" alt="Cowboy cover art" width="92%" />
+  <img src="https://raw.githubusercontent.com/oneprompteu/cowboy/main/assets/cowboys.png" alt="Cowboy cover art" width="72%" />
 </p>
 
-<h1 align="center" style="margin: 0; font-size: 4rem; line-height: 1;">🤠 cowboy</h1>
+<h1 align="center" style="margin: 0; font-size: 5rem; line-height: 1;">🤠 cowboy</h1>
 
 <p align="center" style="margin: 8px 0 0 0;"><strong>The package manager for AI agent skills.</strong></p>
 
