@@ -2,62 +2,57 @@
 
 ## Source of truth
 
-Cowboy keeps a canonical project-local copy of each installed skill under `.cowboy/skills/<name>/`.
+Cowboy keeps the real canonical skill package in a global user-level data directory:
 
-For generated skills, that directory is the long-lived source of truth.
-Cowboy avoids generating text to stdout and reparsing it later. The agent writes real files directly where Cowboy expects them.
+- macOS: `~/Library/Application Support/Cowboy`
+- Linux: `$XDG_DATA_HOME/cowboy` or `~/.local/share/cowboy`
+- Windows: `%LOCALAPPDATA%\Cowboy`
 
-Imported skills are also copied there so Cowboy can support `enable` and `disable` without re-fetching the source repository.
+Canonical skills live under `skills/<name>/`.
 
-## Installed locations
+Projects also expose each attached skill at `.cowboy/skills/<name>/`, but that path is a symlink or junction to the global canonical package.
 
-Cowboy adapts the canonical skill for the configured install targets:
+## Agent views
 
-- Claude Code:
-  - `.claude/skills/<name>/SKILL.md`
-- Codex:
-  - `.agents/skills/<name>/SKILL.md`
+Cowboy does not copy skills into agent folders anymore.
 
-The canonical package may also include agent-specific companion files when needed. For example, Cowboy preserves optional Codex metadata such as `agents/openai.yaml` in `.cowboy/skills/<name>/`, copies it to `.agents/skills/<name>/`, and omits it from `.claude/skills/<name>/`.
-Cowboy only manages project-local agent directories. User-level Codex skill directories such as `~/.codex/skills` remain outside Cowboy's install surface.
+Instead it builds global agent-specific views under:
 
-## Registry
+- `agent-views/claude/<name>/`
+- `agent-views/codex/<name>/`
 
-Installed skills are tracked in `.cowboy/installed.yaml`.
+Then each project links:
 
-Imported skills store:
+- `.claude/skills/<name>/` to the global Claude view
+- `.agents/skills/<name>/` to the global Codex view
 
-- `source_repo`
-- `source_path`
-- `content_hash`
-- `installed_at`
-- `installed_for`
-- `disabled_for`
+This keeps one canonical skill package while still allowing agent-specific files such as Codex `agents/openai.yaml`.
 
-Generated skills store:
+## Registries
 
-- `sources` when the agent or install flow has concrete GitHub repositories
-- `doc_urls` when the skill was generated or updated from documentation URLs or local docs directories
-- `research_query` when they come from a free-text topic
-- `installed_at`
-- `last_updated`
-- `installed_for`
-- `disabled_for`
+Cowboy tracks skills in two places:
+
+- Global registry: `registry.yaml` in the global Cowboy data directory
+  - stores source metadata, hashes, generation metadata, install dates, and linked projects
+- Project registry: `.cowboy/installed.yaml`
+  - stores only the project's relationship to a skill: `name`, `added_at`, `installed_for`, `disabled_for`
+
+At runtime Cowboy merges both registries into a richer in-memory view.
+
+## Generation and updates
+
+Generation still happens in an isolated temporary workspace.
+
+The agent writes real files inside that workspace, Cowboy validates the result, and then:
+
+1. writes the canonical package into the global library
+2. refreshes the global agent views
+3. links the skill into the target project and agents
+
+Updates to generated skills edit the linked `.cowboy/skills/<name>/` path in the project, which resolves back to the canonical global package.
 
 ## Built-in skills
 
-Cowboy includes a built-in `skill-creator` skill under `src/skills/skill-creator/`.
+Cowboy ships with a built-in `skill-creator` skill under `src/skills/skill-creator/`.
 
-Cowboy ensures it is available before generation so the agent has a concrete rubric for building:
-
-- `SKILL.md`
-- `scripts/`
-- `references/`
-- `assets/`
-
-## Removal
-
-When a generated skill is removed, Cowboy deletes:
-
-1. the installed agent-specific copies
-2. the canonical source in `.cowboy/skills/<name>/`
+It is injected into generation workspaces as an internal dependency and is not installed into every project by default.

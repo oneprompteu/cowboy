@@ -59,12 +59,31 @@ async function findSkillFiles(dir: string): Promise<string[]> {
     const entries = await readdir(currentDir, { withFileTypes: true });
 
     for (const entry of entries) {
+      const fullPath = join(currentDir, entry.name);
+
+      if (entry.name === "SKILL.md") {
+        results.push(join(currentDir, entry.name));
+        continue;
+      }
+
       if (entry.isDirectory()) {
         if (!skipDirs.has(entry.name)) {
-          await walk(join(currentDir, entry.name));
+          await walk(fullPath);
         }
-      } else if (entry.name === "SKILL.md") {
-        results.push(join(currentDir, entry.name));
+        continue;
+      }
+
+      if (entry.isSymbolicLink()) {
+        let linkedStats;
+        try {
+          linkedStats = await stat(fullPath);
+        } catch {
+          continue;
+        }
+
+        if (linkedStats.isDirectory() && !skipDirs.has(entry.name)) {
+          await walk(fullPath);
+        }
       }
     }
   }
@@ -141,6 +160,26 @@ async function collectSkillFiles(skillDir: string): Promise<SkillFile[]> {
           relativePath: relative(skillDir, fullPath),
           content,
         });
+      } else if (entry.isSymbolicLink()) {
+        let linkedStats;
+        try {
+          linkedStats = await stat(fullPath);
+        } catch {
+          continue;
+        }
+
+        if (linkedStats.isDirectory()) {
+          await walk(fullPath);
+          continue;
+        }
+
+        if (linkedStats.isFile()) {
+          const content = await readFile(fullPath);
+          files.push({
+            relativePath: relative(skillDir, fullPath),
+            content,
+          });
+        }
       }
     }
   }

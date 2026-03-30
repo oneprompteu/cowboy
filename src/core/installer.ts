@@ -1,19 +1,31 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
 import type {
   AgentType,
-  ScannedSkill,
-  ImportedSkill,
   GeneratedSkill,
+  ImportedSkill,
   InstalledSkill,
+  ScannedSkill,
   SkillSource,
 } from "./schemas.js";
 import type { AgentAdapter, InstallResult } from "./adapters/base.js";
 import { ClaudeCodeAdapter } from "./adapters/claude-code.js";
 import { CodexAdapter } from "./adapters/codex.js";
-import { addSkill, removeSkill, findSkill } from "./tracker.js";
-import { scanDirectory } from "./scanner.js";
+import {
+  ensureProjectCanonicalLink,
+  loadGlobalCanonicalSkill,
+  removeGlobalSkillFiles,
+  removeProjectCanonicalLink,
+  writeGlobalCanonicalSkill,
+} from "./global-storage.js";
+import {
+  addSkill,
+  findGlobalSkill,
+  findSkill,
+  readGlobalRegistry,
+  readRegistry,
+  removeGlobalSkillEntry,
+  removeSkill,
+} from "./tracker.js";
+import { hashSkill } from "./skill-hash.js";
 
 const adapters: Record<AgentType, AgentAdapter> = {
   claude: new ClaudeCodeAdapter(),
@@ -25,34 +37,25 @@ export function getAdapter(agentType: AgentType): AgentAdapter {
 }
 
 export interface InstallOptions {
-  /** The scanned skill to install */
   skill: ScannedSkill;
-  /** The project directory to install into */
   projectDir: string;
-  /** Which agents to install for */
   agents: AgentType[];
-  /** The GitHub repo URL this skill came from */
   sourceRepo: string;
 }
 
-/**
- * Install a skill into a project for the specified agents.
- * Writes skill files via adapters and tracks in .cowboy/installed.yaml.
- */
 export async function installSkill(
   options: InstallOptions,
 ): Promise<InstallResult[]> {
   const { skill, projectDir, agents, sourceRepo } = options;
   const results: InstallResult[] = [];
 
+  await writeGlobalCanonicalSkill(skill);
+  await ensureProjectCanonicalLink(projectDir, skill.name);
+
   for (const agentType of agents) {
     const adapter = adapters[agentType];
-    const result = await adapter.install(skill, projectDir);
-    results.push(result);
+    results.push(await adapter.install(skill, projectDir));
   }
-
-  // Write canonical copy for enable/disable support
-  await writeCanonicalCopy(skill, projectDir);
 
   const installed: ImportedSkill = {
     name: skill.name,
@@ -66,60 +69,20 @@ export async function installSkill(
   };
 
   await addSkill(projectDir, installed);
-
   return results;
 }
 
-/**
- * Remove a skill from a project.
- * Removes files via adapters and removes from .cowboy/installed.yaml.
- */
-export async function uninstallSkill(
-  skillName: string,
-  projectDir: string,
-): Promise<boolean> {
-  const skill = await findSkill(projectDir, skillName);
-  if (!skill) return false;
-
-  for (const agentType of skill.installed_for) {
-    const adapter = adapters[agentType];
-    await adapter.remove(skillName, projectDir);
-  }
-
-  if (skill.type === "generated") {
-    await rm(join(projectDir, ".cowboy", "skills", skillName), {
-      recursive: true,
-      force: true,
-    });
-  }
-
-  await removeSkill(projectDir, skillName);
-  return true;
-}
-
 export interface GeneratedInstallOptions {
-  /** The generated skill to install */
   skill: ScannedSkill;
-  /** The project directory to install into */
   projectDir: string;
-  /** Which agents to install for */
   agents: AgentType[];
-  /** Source repositories with their commit hashes */
   sources?: SkillSource[];
-  /** Documentation website URLs used as sources */
   docUrls?: string[];
-  /** The free-text topic/query this skill was generated from */
   researchQuery?: string;
-  /** Preserve original installation date when updating an existing skill */
   installedAt?: string;
-  /** Override the last-updated date when needed */
   lastUpdated?: string;
 }
 
-/**
- * Install an AI-generated skill into a project.
- * Same file installation as imported, but tracked as "generated" in the registry.
- */
 export async function installGeneratedSkill(
   options: GeneratedInstallOptions,
 ): Promise<InstallResult[]> {
@@ -133,20 +96,19 @@ export async function installGeneratedSkill(
     installedAt,
     lastUpdated,
   } = options;
-  const results: InstallResult[] = [];
 
   if ((!sources || sources.length === 0) && (!docUrls || docUrls.length === 0) && !researchQuery) {
     throw new Error("Generated skills require sources, docUrls, or researchQuery.");
   }
 
+  const results: InstallResult[] = [];
+  await writeGlobalCanonicalSkill(skill);
+  await ensureProjectCanonicalLink(projectDir, skill.name);
+
   for (const agentType of agents) {
     const adapter = adapters[agentType];
-    const result = await adapter.install(skill, projectDir);
-    results.push(result);
+    results.push(await adapter.install(skill, projectDir));
   }
-
-  // Write canonical copy for enable/disable support
-  await writeCanonicalCopy(skill, projectDir);
 
   const today = new Date().toISOString().split("T")[0];
   const installed: GeneratedSkill = {
@@ -165,10 +127,89 @@ export async function installGeneratedSkill(
   return results;
 }
 
-/**
- * Disable a skill for specific agents (or all).
- * Removes files from agent directories and updates the registry.
- */
+export async function addGlobalSkillToProject(
+  skillName: string,
+  projectDir: string,
+  agents: AgentType[],
+): Promise<InstallResult[]> {
+  const globalSkill = await findGlobalSkill(skillName);
+  if (!globalSkill) {
+    throw new Error(`Skill "${skillName}" is not in the global Cowboy library.`);
+  }
+
+  const canonical = await loadGlobalCanonicalSkill(skillName);
+  if (!canonical) {
+    throw new Error(`Global skill "${skillName}" is missing its canonical files.`);
+  }
+
+  await ensureProjectCanonicalLink(projectDir, skillName);
+  const existing = await findSkill(projectDir, skillName);
+  const nextInstalledFor = Array.from(new Set([
+    ...(existing?.installed_for ?? []),
+    ...agents,
+  ]));
+  const nextDisabled = (existing?.disabled_for ?? []).filter((agent) => !agents.includes(agent));
+
+  const results: InstallResult[] = [];
+  for (const agentType of agents) {
+    const adapter = adapters[agentType];
+    results.push(await adapter.install(canonical, projectDir));
+  }
+
+  await addSkill(projectDir, mergeWithProjectState(globalSkill, nextInstalledFor, nextDisabled));
+  return results;
+}
+
+export async function uninstallSkill(
+  skillName: string,
+  projectDir: string,
+): Promise<boolean> {
+  const skill = await findSkill(projectDir, skillName);
+  if (!skill) return false;
+
+  for (const agentType of skill.installed_for) {
+    await adapters[agentType].remove(skillName, projectDir);
+  }
+
+  await removeProjectCanonicalLink(projectDir, skillName);
+  await removeSkill(projectDir, skillName);
+  return true;
+}
+
+export async function removeGlobalSkill(
+  skillName: string,
+  options?: { force?: boolean },
+): Promise<void> {
+  const globalSkill = await findGlobalSkill(skillName);
+  if (!globalSkill) {
+    throw new Error(`Skill "${skillName}" was not found in the global Cowboy library.`);
+  }
+
+  const linkedProjects = [...globalSkill.linked_projects];
+  if (linkedProjects.length > 0 && !options?.force) {
+    throw new Error(
+      `Skill "${skillName}" is still linked in ${linkedProjects.length} project(s). Use --force to remove it globally.`,
+    );
+  }
+
+  for (const linkedProject of linkedProjects) {
+    const linkedSkill = await findSkill(linkedProject, skillName);
+    if (!linkedSkill) {
+      continue;
+    }
+
+    for (const agentType of linkedSkill.installed_for) {
+      await adapters[agentType].remove(skillName, linkedProject);
+    }
+
+    await removeProjectCanonicalLink(linkedProject, skillName);
+    await removeSkill(linkedProject, skillName);
+  }
+
+  await removeGlobalSkillFiles(skillName);
+  await removeGlobalSkillEntry(skillName);
+}
+
 export async function disableSkill(
   skillName: string,
   projectDir: string,
@@ -177,35 +218,29 @@ export async function disableSkill(
   const skill = await findSkill(projectDir, skillName);
   if (!skill) return null;
 
-  const toDisable = agent
-    ? [agent]
-    : skill.installed_for;
+  const toDisable = agent ? [agent] : skill.installed_for;
 
-  for (const a of toDisable) {
-    if (!skill.installed_for.includes(a)) continue;
-    if (skill.disabled_for.includes(a)) continue;
-    await adapters[a].remove(skillName, projectDir);
+  for (const currentAgent of toDisable) {
+    if (!skill.installed_for.includes(currentAgent)) continue;
+    if (skill.disabled_for.includes(currentAgent)) continue;
+    await adapters[currentAgent].remove(skillName, projectDir);
   }
 
-  const alreadyDisabled = new Set(skill.disabled_for);
-  for (const a of toDisable) {
-    if (skill.installed_for.includes(a)) {
-      alreadyDisabled.add(a);
+  const disabled = new Set(skill.disabled_for);
+  for (const currentAgent of toDisable) {
+    if (skill.installed_for.includes(currentAgent)) {
+      disabled.add(currentAgent);
     }
   }
 
   const updated: InstalledSkill = {
     ...skill,
-    disabled_for: [...alreadyDisabled],
+    disabled_for: [...disabled],
   };
   await addSkill(projectDir, updated);
   return updated;
 }
 
-/**
- * Enable a skill for specific agents (or all).
- * Re-installs files from the canonical copy and updates the registry.
- */
 export async function enableSkill(
   skillName: string,
   projectDir: string,
@@ -214,84 +249,66 @@ export async function enableSkill(
   const skill = await findSkill(projectDir, skillName);
   if (!skill) return null;
 
-  const toEnable = agent
-    ? [agent]
-    : [...skill.disabled_for];
-
+  const toEnable = agent ? [agent] : [...skill.disabled_for];
   if (toEnable.length === 0) return skill;
 
-  const canonical = await loadCanonicalCopy(skillName, projectDir);
+  const canonical = await loadGlobalCanonicalSkill(skillName);
   if (!canonical) {
     throw new Error(
-      `Cannot enable "${skillName}": canonical copy not found in .cowboy/skills/${skillName}/.`,
+      `Cannot enable "${skillName}": global canonical copy was not found.`,
     );
   }
 
-  for (const a of toEnable) {
-    if (!skill.installed_for.includes(a)) continue;
-    if (!skill.disabled_for.includes(a)) continue;
-    await adapters[a].install(canonical, projectDir);
-  }
+  await ensureProjectCanonicalLink(projectDir, skillName);
 
-  const stillDisabled = skill.disabled_for.filter(
-    (a) => !toEnable.includes(a),
-  );
+  for (const currentAgent of toEnable) {
+    if (!skill.installed_for.includes(currentAgent)) continue;
+    if (!skill.disabled_for.includes(currentAgent)) continue;
+    await adapters[currentAgent].install(canonical, projectDir);
+  }
 
   const updated: InstalledSkill = {
     ...skill,
-    disabled_for: stillDisabled,
+    disabled_for: skill.disabled_for.filter((currentAgent) => !toEnable.includes(currentAgent)),
   };
   await addSkill(projectDir, updated);
   return updated;
 }
 
-// --- Private helpers ---
-
-const CANONICAL_DIR = join(".cowboy", "skills");
-
-async function writeCanonicalCopy(
-  skill: ScannedSkill,
-  projectDir: string,
-): Promise<void> {
-  const skillDir = join(projectDir, CANONICAL_DIR, skill.name);
-  await rm(skillDir, { recursive: true, force: true });
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(join(skillDir, "SKILL.md"), skill.rawContent, "utf-8");
-
-  for (const file of skill.files ?? []) {
-    const filePath = join(skillDir, file.relativePath);
-    await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, file.content);
-  }
+export async function getLinkedProjects(skillName: string): Promise<string[]> {
+  const globalRegistry = await readGlobalRegistry();
+  return globalRegistry.skills.find((skill) => skill.name === skillName)?.linked_projects ?? [];
 }
 
-async function loadCanonicalCopy(
-  skillName: string,
-  projectDir: string,
-): Promise<ScannedSkill | null> {
-  const skillDir = join(projectDir, CANONICAL_DIR, skillName);
-  try {
-    const skills = await scanDirectory(skillDir);
-    return skills[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Hash the entire skill: SKILL.md content + all companion files.
- * This ensures updates detect changes in scripts, references, etc.
- */
-function hashSkill(skill: ScannedSkill): string {
-  const hash = createHash("sha256");
-  hash.update(skill.rawContent);
-
-  if (skill.files) {
-    for (const file of skill.files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
-      hash.update(file.relativePath);
-      hash.update(file.content);
-    }
+function mergeWithProjectState(
+  globalSkill: Awaited<ReturnType<typeof findGlobalSkill>> extends infer T
+    ? NonNullable<T>
+    : never,
+  installedFor: AgentType[],
+  disabledFor: AgentType[],
+): InstalledSkill {
+  if (globalSkill.type === "imported") {
+    return {
+      type: "imported",
+      name: globalSkill.name,
+      installed_at: globalSkill.installed_at,
+      source_repo: globalSkill.source_repo,
+      source_path: globalSkill.source_path,
+      content_hash: globalSkill.content_hash,
+      installed_for: installedFor,
+      disabled_for: disabledFor,
+    };
   }
 
-  return `sha256:${hash.digest("hex").substring(0, 12)}`;
+  return {
+    type: "generated",
+    name: globalSkill.name,
+    installed_at: globalSkill.installed_at,
+    sources: globalSkill.sources,
+    doc_urls: globalSkill.doc_urls,
+    research_query: globalSkill.research_query,
+    last_updated: globalSkill.last_updated,
+    installed_for: installedFor,
+    disabled_for: disabledFor,
+  };
 }

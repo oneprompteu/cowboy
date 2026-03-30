@@ -93,6 +93,77 @@ export type CowboyConfig = z.infer<typeof CowboyConfigSchema>;
 
 // --- .cowboy/installed.yaml ---
 
+const ProjectInstalledSkillBase = z.object({
+  name: z.string(),
+  installed_for: z.array(AgentType),
+  disabled_for: z.array(AgentType).default([]),
+  added_at: z.string(),
+});
+
+export const ProjectInstalledSkillSchema = ProjectInstalledSkillBase;
+export type ProjectInstalledSkill = z.infer<typeof ProjectInstalledSkillSchema>;
+
+export const ProjectRegistrySchema = z.object({
+  skills: z.array(ProjectInstalledSkillSchema).default([]),
+});
+
+export type ProjectRegistry = z.infer<typeof ProjectRegistrySchema>;
+
+const GlobalInstalledSkillBase = z.object({
+  name: z.string(),
+  installed_at: z.string(),
+  linked_projects: z.array(z.string()).default([]),
+});
+
+export const GlobalImportedSkillSchema = GlobalInstalledSkillBase.extend({
+  type: z.literal("imported"),
+  source_repo: z.string(),
+  source_path: z.string(),
+  content_hash: z.string(),
+});
+
+export const SkillSourceSchema = z.object({
+  repo: z.string().url(),
+  commit_hash: z.string().optional(),
+});
+
+export type SkillSource = z.infer<typeof SkillSourceSchema>;
+
+export const GlobalGeneratedSkillSchema = GlobalInstalledSkillBase.extend({
+  type: z.literal("generated"),
+  research_query: z.string().min(1).optional(),
+  sources: z.array(SkillSourceSchema).optional(),
+  doc_urls: z.array(z.string().min(1)).optional(),
+  last_updated: z.string(),
+}).refine(
+  (skill) => Boolean(
+    (skill.sources && skill.sources.length > 0) ||
+    (skill.doc_urls && skill.doc_urls.length > 0) ||
+    skill.research_query
+  ),
+  {
+    message: "Generated skills require sources, doc_urls, or research_query",
+    path: ["sources"],
+  },
+);
+
+export const GlobalInstalledSkillSchema = z.discriminatedUnion("type", [
+  GlobalImportedSkillSchema,
+  GlobalGeneratedSkillSchema,
+]);
+
+export type GlobalInstalledSkill = z.infer<typeof GlobalInstalledSkillSchema>;
+export type GlobalImportedSkill = z.infer<typeof GlobalImportedSkillSchema>;
+export type GlobalGeneratedSkill = z.infer<typeof GlobalGeneratedSkillSchema>;
+
+export const GlobalRegistrySchema = z.object({
+  skills: z.array(GlobalInstalledSkillSchema).default([]),
+});
+
+export type GlobalRegistry = z.infer<typeof GlobalRegistrySchema>;
+
+// --- Merged project + global skill view ---
+
 const InstalledSkillBase = z.object({
   name: z.string(),
   installed_at: z.string(),
@@ -106,13 +177,6 @@ export const ImportedSkillSchema = InstalledSkillBase.extend({
   source_path: z.string(),
   content_hash: z.string(),
 });
-
-export const SkillSourceSchema = z.object({
-  repo: z.string().url(),
-  commit_hash: z.string().optional(),
-});
-
-export type SkillSource = z.infer<typeof SkillSourceSchema>;
 
 export const GeneratedSkillSchema = InstalledSkillBase.extend({
   type: z.literal("generated"),

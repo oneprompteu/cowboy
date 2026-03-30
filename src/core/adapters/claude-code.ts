@@ -1,7 +1,11 @@
-import { mkdir, writeFile, rm } from "node:fs/promises";
-import { join, dirname } from "node:path";
 import type { AgentAdapter, InstallResult } from "./base.js";
 import type { ScannedSkill } from "../schemas.js";
+import {
+  ensureProjectAgentLink,
+  getGlobalAgentViewDir,
+  removeProjectAgentLink,
+  writeSkillPackageToDir,
+} from "../global-storage.js";
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly agentType = "claude" as const;
@@ -10,39 +14,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     skill: ScannedSkill,
     projectDir: string,
   ): Promise<InstallResult> {
-    const skillDir = join(projectDir, ".claude", "skills", skill.name);
-    const skillFile = join(skillDir, "SKILL.md");
-
-    await rm(skillDir, { recursive: true, force: true });
-    await mkdir(skillDir, { recursive: true });
-    await writeFile(skillFile, skill.rawContent, "utf-8");
-
-    const allFiles = [skillFile];
-
-    if (skill.files) {
-      for (const file of skill.files) {
-        if (file.relativePath === "agents/openai.yaml") {
-          continue;
-        }
-
-        const filePath = join(skillDir, file.relativePath);
-        await mkdir(dirname(filePath), { recursive: true });
-        await writeFile(filePath, file.content);
-        allFiles.push(filePath);
-      }
-    }
+    const globalViewDir = getGlobalAgentViewDir(this.agentType, skill.name);
+    await writeSkillPackageToDir(skill, globalViewDir, {
+      filterFile: (file) => file.relativePath !== "agents/openai.yaml",
+    });
+    const linkPath = await ensureProjectAgentLink(projectDir, this.agentType, skill.name);
 
     return {
       agent: this.agentType,
       skillName: skill.name,
-      files: allFiles,
+      files: [linkPath],
     };
   }
 
   async remove(skillName: string, projectDir: string): Promise<void> {
-    await rm(join(projectDir, ".claude", "skills", skillName), {
-      recursive: true,
-      force: true,
-    });
+    await removeProjectAgentLink(projectDir, this.agentType, skillName);
   }
 }

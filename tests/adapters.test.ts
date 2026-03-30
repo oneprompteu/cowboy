@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, mkdir, readFile, access, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, readFile, access, writeFile, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ClaudeCodeAdapter } from "../src/core/adapters/claude-code.js";
@@ -62,9 +62,11 @@ const mockSkillWithCodexMetadata: ScannedSkill = {
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-adapters-"));
+  process.env.COWBOY_DATA_DIR = join(tempDir, ".cowboy-global");
 });
 
 afterEach(async () => {
+  delete process.env.COWBOY_DATA_DIR;
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -94,10 +96,11 @@ describe("ClaudeCodeAdapter", () => {
 
     const content = await readFile(skillPath, "utf-8");
     expect(content).toBe(mockSkill.rawContent);
+    expect((await lstat(join(tempDir, ".claude", "skills", "tdd-workflow"))).isSymbolicLink()).toBe(true);
 
     expect(result.agent).toBe("claude");
     expect(result.skillName).toBe("tdd-workflow");
-    expect(result.files).toContain(skillPath);
+    expect(result.files).toEqual([join(tempDir, ".claude", "skills", "tdd-workflow")]);
   });
 
   it("removes skill directory", async () => {
@@ -126,7 +129,7 @@ describe("ClaudeCodeAdapter", () => {
     const refContent = await readFile(refPath, "utf-8");
     expect(refContent).toBe("# PDF API Docs");
 
-    expect(result.files.length).toBe(3);
+    expect(result.files).toEqual([join(tempDir, ".claude", "skills", "pdf-editor")]);
   });
 
   it("skips Codex-only metadata files", async () => {
@@ -136,7 +139,7 @@ describe("ClaudeCodeAdapter", () => {
     expect(await exists(join(skillDir, "SKILL.md"))).toBe(true);
     expect(await exists(join(skillDir, "references", "patterns.md"))).toBe(true);
     expect(await exists(join(skillDir, "agents", "openai.yaml"))).toBe(false);
-    expect(result.files).toHaveLength(2);
+    expect(result.files).toEqual([join(tempDir, ".claude", "skills", "deepagents")]);
   });
 });
 
@@ -157,6 +160,7 @@ describe("CodexAdapter", () => {
 
     const content = await readFile(skillPath, "utf-8");
     expect(content).toBe(mockSkill.rawContent);
+    expect((await lstat(join(tempDir, ".agents", "skills", "tdd-workflow"))).isSymbolicLink()).toBe(true);
 
     expect(result.agent).toBe("codex");
     expect(result.skillName).toBe("tdd-workflow");
@@ -222,7 +226,7 @@ describe("CodexAdapter", () => {
     expect(await exists(join(skillDir, "references", "api.md"))).toBe(true);
     expect(await exists(join(skillDir, "agents", "openai.yaml"))).toBe(true);
 
-    expect(result.files.length).toBe(4);
+    expect(result.files).toEqual([join(tempDir, ".agents", "skills", "pdf-editor")]);
   });
 
   it("preserves agents/openai.yaml when the canonical skill includes it", async () => {

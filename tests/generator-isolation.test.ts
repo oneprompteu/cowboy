@@ -35,6 +35,7 @@ let tempDir: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-generator-isolation-"));
+  process.env.COWBOY_DATA_DIR = join(tempDir, ".cowboy-global");
   cloneMock.mockReset();
   revparseMock.mockReset();
   sessionMock.mockReset();
@@ -43,6 +44,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  delete process.env.COWBOY_DATA_DIR;
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -119,13 +121,9 @@ describe("generateSkill isolation", () => {
 
     const [, cloneDir] = cloneMock.mock.calls[0];
     expect(cloneDir).toContain(`${join(".cowboy", ".tmp", "generate-")}`);
-    expect(await readFile(
-      join(tempDir, ".cowboy", "skills", "deepagents", "SKILL.md"),
-      "utf-8",
-    )).toContain("Isolated deepagents skill");
-    expect(await exists(
-      join(tempDir, ".cowboy", "skills", "deepagents", "references", "source-map.md"),
-    )).toBe(true);
+    expect(result.skill.description).toBe("Isolated deepagents skill");
+    const referenceFile = result.skill.files?.find((file) => file.relativePath === "references/source-map.md");
+    expect(referenceFile?.content.toString("utf-8")).toContain("Useful reference.");
 
     const tempEntries = await readdir(join(tempDir, ".cowboy", ".tmp"));
     expect(tempEntries).toEqual([]);

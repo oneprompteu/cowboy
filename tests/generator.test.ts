@@ -21,10 +21,12 @@ let tempDir: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-generator-"));
+  process.env.COWBOY_DATA_DIR = join(tempDir, ".cowboy-global");
   await mkdir(join(tempDir, ".cowboy", "skills"), { recursive: true });
 });
 
 afterEach(async () => {
+  delete process.env.COWBOY_DATA_DIR;
   await rm(tempDir, { recursive: true, force: true });
 });
 

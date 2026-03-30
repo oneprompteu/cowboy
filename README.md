@@ -11,7 +11,7 @@ Cowboy helps you create, install, and update AI agent skills with simple command
 </p>
 
 <p align="center" style="margin: 8px 0 0 0;">
-  <a href="https://github.com/oneprompteu/cowboy/tree/main/docs"><strong>Documentation</strong></a> · <strong>MIT License</strong>
+  <a href="https://oneprompteu.github.io/cowboy/"><strong>Documentation</strong></a> · <strong>MIT License</strong>
 </p>
 
 ---
@@ -44,10 +44,11 @@ But today, skills are:
 
 Cowboy fixes this.
 
-It gives you a **single project-local source of truth** for skills that can be:
+It gives you a **single user-level source of truth** for skills that can be:
 
 * installed from GitHub
 * generated automatically from docs or repos
+* added to multiple projects
 * synced to multiple agents
 * updated to latest versions
 * enabled or disabled per agent
@@ -116,13 +117,13 @@ From one canonical package.
 
 ## One canonical source of truth
 
-Skills live in:
+Skills live once in the user's global Cowboy data directory:
 
-```
-.cowboy/skills/{name}/
-```
+- macOS: `~/Library/Application Support/Cowboy`
+- Linux: `$XDG_DATA_HOME/cowboy` or `~/.local/share/cowboy`
+- Windows: `%LOCALAPPDATA%\\Cowboy`
 
-Cowboy syncs them automatically to agent-specific directories.
+Projects keep links in `.cowboy/skills/{name}/`, and agent directories also use links instead of copies.
 
 No drift. No duplication. No manual copy-paste.
 
@@ -135,12 +136,12 @@ No drift. No duplication. No manual copy-paste.
 | Auto updates             | Refresh skills from GitHub or regenerate from docs |
 | AI skill generation      | Generate skills from repos, docs, or topics        |
 | Multi-agent install      | Sync skills to Claude Code and Codex               |
-| Canonical storage        | One source of truth in `.cowboy/skills/`           |
+| Canonical storage        | One source of truth in the global Cowboy library   |
 | Repo import              | Install skills from GitHub skill repositories      |
 | Free generation          | Uses your own Codex / Claude Code subscription     |
 | Explicit install targets | Generate with one agent, install to another        |
 | Enable / disable         | Toggle skills per agent without deleting           |
-| Version control friendly | Skills are local, portable, and commit-safe        |
+| Version control friendly | Projects keep lightweight links instead of copies  |
 | No vendor lock-in        | Works with local agent CLIs                        |
 
 ---
@@ -177,6 +178,7 @@ cowboy init
 cowboy install https://github.com/ComposioHQ/awesome-claude-skills
 cowboy generate deepagents
 cowboy list
+cowboy list --all
 cowboy update
 ```
 
@@ -243,10 +245,16 @@ Cowboy manages skills in three layers:
 ### 2. Canonical storage
 
 ```
-.cowboy/skills/{name}/
+<global Cowboy data dir>/skills/{name}/
 ```
 
-Portable and versionable.
+This is the real canonical package.
+
+Projects keep a local alias at:
+
+```
+.cowboy/skills/{name}/
+```
 
 ### 3. Agent sync
 
@@ -255,7 +263,7 @@ Portable and versionable.
 .agents/skills/
 ```
 
-Cowboy keeps everything in sync automatically.
+These project-local agent directories are links to global agent views, not copied folders.
 
 ---
 
@@ -291,11 +299,11 @@ your-project/
 ├── .cowboy/
 │   ├── config.yaml
 │   ├── installed.yaml
-│   └── skills/
+│   └── skills/        # links to the global library
 ├── .claude/
-│   └── skills/
+│   └── skills/        # links to global Claude views
 └── .agents/
-    └── skills/
+    └── skills/        # links to global Codex views
 ```
 
 ---
@@ -307,7 +315,7 @@ your-project/
 | Claude Code | `.claude/skills/{name}/` |
 | Codex       | `.agents/skills/{name}/` |
 
-Cowboy installs **project-local skills only**.
+Cowboy stores canonical skills **globally** and links them into each project.
 
 ---
 
@@ -316,9 +324,11 @@ Cowboy installs **project-local skills only**.
 ```bash
 cowboy init
 cowboy install <github-url>
+cowboy add <name>
 cowboy generate [topic]
 cowboy update
 cowboy list
+cowboy list --all
 cowboy enable <name>
 cowboy disable <name>
 cowboy remove <name>

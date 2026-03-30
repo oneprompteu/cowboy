@@ -13,6 +13,15 @@ import { parse as yamlParse } from "yaml";
 import { runHeadlessAgentSession, type AIAgent } from "./ai-bridge.js";
 import { scanDirectory } from "./scanner.js";
 import type { ScannedSkill, SkillSource } from "./schemas.js";
+import {
+  copyDirectoryDereferenced,
+  ensureProjectCanonicalLink,
+  getProjectAgentSkillDir,
+  loadGlobalCanonicalSkill,
+  writeGlobalCanonicalSkill,
+  writeSkillPackageToDir,
+} from "./global-storage.js";
+import { loadBuiltinSkills } from "./builtins.js";
 
 const GENERATED_SKILLS_DIR = join(".cowboy", "skills");
 const TEMP_DIR = join(".cowboy", ".tmp");
@@ -228,11 +237,7 @@ export async function generateSkill(
       effort: agentEffort,
     });
 
-    const skill = await syncGeneratedSkillFromWorkspace(
-      workspaceDir,
-      projectDir,
-      skillName,
-    );
+    const skill = await syncGeneratedSkillFromWorkspace(workspaceDir, skillName);
 
     const discoveredUrls = await parseSourcesYaml(workspaceDir, skill.name, WORKSPACE_SKILLS_DIR);
     let sources: SkillSource[] = [];
@@ -332,13 +337,10 @@ export async function ensureGeneratedSkillSource(
   projectDir: string,
   skillName: string,
 ): Promise<void> {
-  const canonicalDir = getGeneratedSkillDir(projectDir, skillName);
-
-  try {
-    await readFile(join(canonicalDir, "SKILL.md"), "utf-8");
+  const globalSkill = await loadGlobalCanonicalSkill(skillName);
+  if (globalSkill) {
+    await ensureProjectCanonicalLink(projectDir, skillName);
     return;
-  } catch {
-    // Fall through to bootstrap from an installed copy.
   }
 
   const skill = await loadInstalledGeneratedSkill(projectDir, skillName);
@@ -355,17 +357,8 @@ export async function writeGeneratedSkillSource(
   projectDir: string,
   skill: ScannedSkill,
 ): Promise<void> {
-  const skillDir = getGeneratedSkillDir(projectDir, skill.name);
-
-  await rm(skillDir, { recursive: true, force: true });
-  await mkdir(skillDir, { recursive: true });
-  await writeFile(join(skillDir, "SKILL.md"), skill.rawContent, "utf-8");
-
-  for (const file of skill.files ?? []) {
-    const filePath = join(skillDir, file.relativePath);
-    await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, file.content);
-  }
+  await writeGlobalCanonicalSkill(skill);
+  await ensureProjectCanonicalLink(projectDir, skill.name);
 }
 
 // --- Prompt builders ---
@@ -653,11 +646,7 @@ async function generateSkillFromRepos(
       effort: options.agentEffort,
     });
 
-    const skill = await syncGeneratedSkillFromWorkspace(
-      workspaceDir,
-      projectDir,
-      skillName,
-    );
+    const skill = await syncGeneratedSkillFromWorkspace(workspaceDir, skillName);
 
     const sources: SkillSource[] = clones.map((c) => ({
       repo: c.repoUrl,
@@ -748,12 +737,7 @@ async function createIsolatedGenerationWorkspace(
       );
     }
 
-    await copyInstalledSkill(
-      projectDir,
-      workspaceDir,
-      aiAgent,
-      SKILL_CREATOR_NAME,
-    );
+    await installBuiltinSkillInWorkspace(workspaceDir, aiAgent, SKILL_CREATOR_NAME);
 
     return workspaceDir;
   } catch (error) {
@@ -764,7 +748,6 @@ async function createIsolatedGenerationWorkspace(
 
 async function syncGeneratedSkillFromWorkspace(
   workspaceDir: string,
-  projectDir: string,
   expectedName?: string,
 ): Promise<ScannedSkill> {
   const skill = await resolveGeneratedSkill({
@@ -772,21 +755,7 @@ async function syncGeneratedSkillFromWorkspace(
     expectedName,
     skillsDir: join(workspaceDir, WORKSPACE_SKILLS_DIR),
   });
-  const sanitizedSkill = sanitizeGeneratedSkill(skill);
-  await writeGeneratedSkillSource(projectDir, sanitizedSkill);
-  return sanitizedSkill;
-}
-
-async function copyInstalledSkill(
-  sourceProjectDir: string,
-  workspaceDir: string,
-  aiAgent: AIAgent,
-  skillName: string,
-): Promise<void> {
-  const sourceDir = getInstalledSkillDir(sourceProjectDir, aiAgent, skillName);
-  const destDir = getInstalledSkillDir(workspaceDir, aiAgent, skillName);
-
-  await cp(sourceDir, destDir, { recursive: true, force: true });
+  return sanitizeGeneratedSkill(skill);
 }
 
 function getInstalledSkillDir(
@@ -803,7 +772,7 @@ function getInstalledSkillDir(
 
 async function copyDirIfExists(sourceDir: string, destDir: string): Promise<void> {
   try {
-    await cp(sourceDir, destDir, { recursive: true, force: true });
+    await copyDirectoryDereferenced(sourceDir, destDir);
   } catch (error: any) {
     if (error?.code !== "ENOENT") {
       throw error;
@@ -862,4 +831,36 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+async function installBuiltinSkillInWorkspace(
+  workspaceDir: string,
+  aiAgent: AIAgent,
+  skillName: string,
+): Promise<void> {
+  const builtins = await loadBuiltinSkills();
+  const skill = builtins.find((entry) => entry.name === skillName);
+  if (!skill) {
+    throw new Error(`Built-in skill "${skillName}" not found.`);
+  }
+
+  const hasOpenAIYaml = (skill.files ?? []).some((file) => file.relativePath === "agents/openai.yaml");
+  await writeSkillPackageToDir(skill, getProjectAgentSkillDir(workspaceDir, aiAgent, skillName), {
+    extraTextFiles: aiAgent === "codex" && !hasOpenAIYaml
+      ? [{ relativePath: "agents/openai.yaml", content: generateWorkspaceOpenAIYaml(skill) }]
+      : undefined,
+  });
+}
+
+function generateWorkspaceOpenAIYaml(skill: ScannedSkill): string {
+  return [
+    "interface:",
+    `  display_name: ${skill.name}`,
+    `  short_description: ${JSON.stringify(skill.description)}`,
+    "  brand_color: \"#000000\"",
+    `  default_prompt: ${JSON.stringify(`Use the ${skill.name} skill`)}`,
+    "policy:",
+    "  allow_implicit_invocation: true",
+    "",
+  ].join("\n");
 }

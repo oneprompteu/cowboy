@@ -31,6 +31,9 @@ cowboy init
 cowboy install https://github.com/anthropics/awesome-claude-skills
 cowboy install https://github.com/anthropics/awesome-claude-skills --install-for codex
 
+# Add an existing global skill to this project
+cowboy add playwright-testing
+
 # Generate from a free-text topic
 cowboy generate langchain
 
@@ -57,16 +60,18 @@ cowboy enable playwright-testing --agent codex
 
 ## Core idea
 
-Cowboy keeps a canonical project-local copy of each skill under `.cowboy/skills/<name>/`.
+Cowboy keeps the real canonical skill package in a global user-level library:
 
-Generated skills are authored there and then installed for the configured agents.
+- macOS: `~/Library/Application Support/Cowboy`
+- Linux: `$XDG_DATA_HOME/cowboy` or `~/.local/share/cowboy`
+- Windows: `%LOCALAPPDATA%\Cowboy`
 
-Cowboy then installs those files for the configured destination agents:
+Each project keeps a local alias at `.cowboy/skills/<name>/`, and the agent directories are also linked into global agent views:
 
 - Claude Code: `.claude/skills/<name>/`
 - Codex: `.agents/skills/<name>/`
 
-This lets Cowboy support cross-agent installs, updates, and per-agent enable/disable without duplicating the package definition.
+This lets Cowboy support cross-project reuse, cross-agent installs, updates, and per-agent enable/disable without duplicating the package definition.
 
 ## Documentation map
 

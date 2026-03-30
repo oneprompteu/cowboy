@@ -9,20 +9,19 @@ What it does:
 1. Asks which agents should receive installed skills by default
 2. Asks which agent should generate and update skills by default
 3. Creates `.cowboy/config.yaml`
-4. Creates the required agent directories
-5. Installs built-in skills such as `skill-creator`
-6. Stores default Claude model/effort and Codex reasoning effort for future generation and update runs
+4. Creates the required project link directories
+5. Stores default Claude model/effort and Codex reasoning effort for future generation and update runs
 
 ## `cowboy install <github-url>`
 
-Scans a GitHub repo for `SKILL.md` files and installs the selected skills.
+Scans a GitHub repo for `SKILL.md` files, stores the selected skills in the global Cowboy library, and adds them to the current project.
 
 Options:
 
 - `--all` installs every discovered skill without prompting
 - `--install-for <agent>` is repeatable and also accepts comma-separated values
 
-Cowboy writes the installed files into each target agent directory and stores source metadata in `.cowboy/installed.yaml`.
+If a skill with the same name already exists globally, Cowboy reuses it and links it into the current project instead of duplicating it.
 
 Install target behavior:
 
@@ -51,7 +50,7 @@ Source behavior:
 
 Optional flags:
 
-- `--name <name>` to force the generated skill name
+- `--name <name>` to force the generated skill name; generation fails if that name already exists globally
 - `--agent <agent>` to force `claude` or `codex`
 - `--claude-model <model>` to override Claude's model for the current run
 - `--effort <level>` to override the selected agent's thinking/reasoning effort for the current run
@@ -69,9 +68,19 @@ Install target behavior:
 2. Otherwise install for the configured agents in `.cowboy/config.yaml`
 3. Otherwise fall back to detected agent directories
 
+## `cowboy add <name>`
+
+Adds an existing global skill to the current project and activates it for the selected agents.
+
+Options:
+
+- `--install-for <agent>` is repeatable and also accepts comma-separated values
+
+Without `--install-for`, Cowboy uses the configured agents from `.cowboy/config.yaml` or falls back to detected agent directories.
+
 ## `cowboy update [name]`
 
-Updates installed skills.
+Updates the skills currently added to the project.
 
 Behavior depends on skill type:
 
@@ -94,7 +103,7 @@ Sets the default agent Cowboy should use for generation when no `--agent` flag i
 
 ## `cowboy list`
 
-Lists installed skills and their source metadata.
+Lists the skills added to the current project and their source metadata.
 
 Output includes:
 
@@ -103,9 +112,13 @@ Output includes:
 - which agents are currently disabled
 - source repos, research query, or docs metadata when available
 
+## `cowboy list --all`
+
+Lists every skill in the global Cowboy library and marks whether each one is currently added to the project.
+
 ## `cowboy enable <name>`
 
-Re-enables a previously disabled skill from its canonical copy in `.cowboy/skills/<name>/`.
+Re-enables a previously disabled skill from the global canonical package linked at `.cowboy/skills/<name>/`.
 
 Options:
 
@@ -121,11 +134,22 @@ Options:
 
 - `--agent <type>` disables only `claude` or `codex`
 
-Without `--agent`, Cowboy removes the skill from every installed agent target but keeps its canonical copy and metadata.
+Without `--agent`, Cowboy removes the skill from every active agent target in the project but keeps the project link and global metadata.
 
 ## `cowboy remove <name>`
 
-Removes the installed skill files and, for generated skills, also removes the canonical source in `.cowboy/skills/<name>/`.
+Removes the skill from the current project only.
+
+This deletes the local `.cowboy/skills/<name>` link and agent links, but keeps the canonical package in the global library.
+
+## `cowboy remove <name> --global`
+
+Removes the skill from the global Cowboy library.
+
+Behavior:
+
+- rejects if the skill is still linked in one or more projects
+- accepts `--force` to remove it globally and clean up linked projects
 
 ## `cowboy agents`
 

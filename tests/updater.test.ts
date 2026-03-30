@@ -50,6 +50,7 @@ const originalSkill: ScannedSkill = {
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-updater-"));
+  process.env.COWBOY_DATA_DIR = join(tempDir, ".cowboy-global");
   cloneMock.mockReset();
   logMock.mockReset();
   revparseMock.mockReset();
@@ -61,6 +62,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  delete process.env.COWBOY_DATA_DIR;
   await rm(tempDir, { recursive: true, force: true });
 });
 

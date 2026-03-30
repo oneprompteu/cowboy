@@ -60,8 +60,8 @@ Flow:
 4. Cowboy opens a real Claude/Codex session in an isolated temporary workspace
 5. Cloned repos are exposed to the agent as reference material
 6. Local docs directories from `--docs` are mounted into the session; web docs are passed as URLs
-7. The agent writes the skill to `.cowboy/skills/<name>/` inside that isolated workspace
-8. Cowboy syncs the canonical skill back to the real project and installs it for the requested target agents
+7. The agent writes the skill to `skills/<name>/` inside that isolated workspace
+8. Cowboy stores the canonical package in the global library, refreshes the agent views, and links it into the requested project agents
 
 ### Docs-only generation
 
@@ -79,7 +79,7 @@ Flow:
 2. Cowboy opens a real Claude/Codex session in an isolated temporary workspace
 3. Local docs directories are mounted into the session directly
 4. The agent builds the skill from those documentation sources and any primary repos it discovers
-5. Cowboy syncs the canonical skill back to the real project and installs it for the requested target agents
+5. Cowboy stores the canonical package in the global library, refreshes the agent views, and links it into the requested project agents
 
 ### Topic-based generation
 
@@ -96,8 +96,8 @@ Flow:
 2. Any `--docs` sources are resolved and passed into the session
 3. The agent identifies the canonical project, package, framework, or specification behind the topic
 4. When external research is needed, the agent prefers official documentation, maintainer repositories, package indexes, and other primary sources
-5. The agent writes the skill to `.cowboy/skills/<name>/` inside that isolated workspace
-6. Cowboy syncs the canonical skill back to the real project and installs it for the requested target agents
+5. The agent writes the skill to `skills/<name>/` inside that isolated workspace
+6. Cowboy stores the canonical package in the global library, refreshes the agent views, and links it into the requested project agents
 
 ## Constraints
 
@@ -123,7 +123,7 @@ That skill instructs the agent to:
 
 Repo-based generated skills:
 
-- store discovered source repositories and commit hashes in `.cowboy/installed.yaml`
+- store discovered source repositories and commit hashes in the global Cowboy registry
 - use those stored repos to detect whether an update is needed
 - reopen a real interactive agent session only when upstream changes are detected
 - can also carry forward any stored `doc_urls` used during the original generation
@@ -136,6 +136,6 @@ Topic-based generated skills:
 
 Docs-only generated skills:
 
-- store their `doc_urls` in `.cowboy/installed.yaml`
+- store their `doc_urls` in the global Cowboy registry
 - reopen an interactive agent session against those documentation sources on update
 - can also persist any GitHub repositories the agent discovered as primary sources during generation or update

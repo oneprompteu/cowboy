@@ -2,8 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, readFile, access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { installGeneratedSkill, installSkill, uninstallSkill, disableSkill, enableSkill } from "../src/core/installer.js";
-import { readRegistry } from "../src/core/tracker.js";
+import {
+  addGlobalSkillToProject,
+  disableSkill,
+  enableSkill,
+  installGeneratedSkill,
+  installSkill,
+  removeGlobalSkill,
+  uninstallSkill,
+} from "../src/core/installer.js";
+import { readGlobalRegistry, readRegistry } from "../src/core/tracker.js";
 import type { ScannedSkill } from "../src/core/schemas.js";
 
 let tempDir: string;
@@ -32,9 +40,11 @@ async function exists(path: string): Promise<boolean> {
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cowboy-test-installer-"));
+  process.env.COWBOY_DATA_DIR = join(tempDir, ".cowboy-global");
 });
 
 afterEach(async () => {
+  delete process.env.COWBOY_DATA_DIR;
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -349,5 +359,51 @@ describe("installGeneratedSkill with doc_urls", () => {
       ]);
       expect(registry.skills[0].doc_urls).toEqual(["https://docs.example.com"]);
     }
+  });
+});
+
+describe("global library management", () => {
+  it("adds an existing global skill to another project without duplicating canonical files", async () => {
+    const secondProjectDir = await mkdtemp(join(tmpdir(), "cowboy-test-installer-project-"));
+
+    try {
+      await mkdir(join(secondProjectDir, ".claude"), { recursive: true });
+
+      await installSkill({
+        skill: mockSkill,
+        projectDir: tempDir,
+        agents: ["claude"],
+        sourceRepo: "https://github.com/test/repo",
+      });
+
+      const results = await addGlobalSkillToProject("tdd-workflow", secondProjectDir, ["claude"]);
+      expect(results).toHaveLength(1);
+      expect(
+        await exists(join(secondProjectDir, ".claude", "skills", "tdd-workflow", "SKILL.md")),
+      ).toBe(true);
+      expect(
+        await exists(join(secondProjectDir, ".cowboy", "skills", "tdd-workflow", "SKILL.md")),
+      ).toBe(true);
+
+      const globalRegistry = await readGlobalRegistry();
+      expect(globalRegistry.skills[0].linked_projects).toEqual([tempDir, secondProjectDir]);
+    } finally {
+      await rm(secondProjectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects global removal while a skill is still linked to a project unless forced", async () => {
+    await installSkill({
+      skill: mockSkill,
+      projectDir: tempDir,
+      agents: ["claude"],
+      sourceRepo: "https://github.com/test/repo",
+    });
+
+    await expect(removeGlobalSkill("tdd-workflow")).rejects.toThrow("still linked");
+
+    await removeGlobalSkill("tdd-workflow", { force: true });
+    expect(await exists(join(process.env.COWBOY_DATA_DIR!, "skills", "tdd-workflow"))).toBe(false);
+    expect(await exists(join(tempDir, ".cowboy", "skills", "tdd-workflow"))).toBe(false);
   });
 });

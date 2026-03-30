@@ -3,18 +3,25 @@
 import { Command } from "commander";
 import { checkbox, select } from "@inquirer/prompts";
 import chalk from "chalk";
-import { access, mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { stringify as yamlStringify } from "yaml";
 
 import { scanRepo } from "../core/scanner.js";
 import { detectAgentTypes } from "../core/detector.js";
-import { installSkill, installGeneratedSkill, uninstallSkill, enableSkill, disableSkill } from "../core/installer.js";
-import { findSkill, readRegistry } from "../core/tracker.js";
+import {
+  addGlobalSkillToProject,
+  disableSkill,
+  enableSkill,
+  installGeneratedSkill,
+  installSkill,
+  removeGlobalSkill,
+  uninstallSkill,
+} from "../core/installer.js";
+import { findGlobalSkill, readGlobalRegistry, readRegistry } from "../core/tracker.js";
 import { generateSkill, resolveDocSources } from "../core/generator.js";
 import { updateSkills } from "../core/updater.js";
 import { detectAvailableAgents, isAgentAvailable, type AIAgent } from "../core/ai-bridge.js";
-import { loadBuiltinSkills } from "../core/builtins.js";
 import type { CowboyConfig, AgentType } from "../core/schemas.js";
 import { resolveInstallAgents } from "../core/agent-selection.js";
 import {
@@ -27,13 +34,15 @@ import {
   getDefaultConfiguredAgent,
   setDefaultConfiguredAgent,
 } from "../core/config.js";
+import { ensureGlobalStorageDirs } from "../core/global-storage.js";
+import { migrateProjectIfNeeded } from "../core/migration.js";
 
 const program = new Command();
 
 program
   .name("cowboy")
   .description("Install and manage AI agent skills across coding agents")
-  .version("0.1.0");
+  .version("0.1.1");
 
 // --- cowboy init ---
 
@@ -117,23 +126,13 @@ program
     const cowboyDir = join(projectDir, ".cowboy");
 
     await mkdir(cowboyDir, { recursive: true });
+    await mkdir(join(cowboyDir, "skills"), { recursive: true });
+    await ensureGlobalStorageDirs();
     await writeFile(
       join(cowboyDir, "config.yaml"),
       yamlStringify(config),
       "utf-8",
     );
-
-    // Install built-in skills
-    const builtins = await loadBuiltinSkills();
-    for (const skill of builtins) {
-      await installSkill({
-        skill,
-        projectDir,
-        agents: selected,
-        sourceRepo: "builtin",
-      });
-      console.log(`${chalk.green("✓")} Built-in skill: ${chalk.bold(skill.name)}`);
-    }
 
     console.log(chalk.green("\nCowboy initialized."));
     console.log(`Install targets: ${selected.map((a) => chalk.cyan(a)).join(", ")}`);
@@ -177,6 +176,7 @@ program
   )
   .action(async (url: string, opts: { all?: boolean; installFor: string[] }) => {
     const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
     let agents: AgentType[];
 
     try {
@@ -224,15 +224,19 @@ program
     const selectedSkills = skills.filter((s) => selectedNames.includes(s.name));
 
     for (const skill of selectedSkills) {
-      const results = await installSkill({
-        skill,
-        projectDir,
-        agents,
-        sourceRepo: url,
-      });
+      const existingGlobalSkill = await findGlobalSkill(skill.name);
+      const results = existingGlobalSkill
+        ? await addGlobalSkillToProject(skill.name, projectDir, agents)
+        : await installSkill({
+            skill,
+            projectDir,
+            agents,
+            sourceRepo: url,
+          });
 
       const agentNames = results.map((r) => r.agent).join(", ");
-      console.log(`${chalk.green("✓")} ${skill.name} → ${chalk.dim(agentNames)}`);
+      const suffix = existingGlobalSkill ? "linked from global library" : agentNames;
+      console.log(`${chalk.green("✓")} ${skill.name} → ${chalk.dim(suffix)}`);
     }
 
     console.log(
@@ -244,68 +248,107 @@ program
 
 program
   .command("list")
-  .description("List installed skills")
-  .action(async () => {
+  .description("List project skills or the global Cowboy library")
+  .option("--all", "List all skills in the global Cowboy library")
+  .action(async (opts: { all?: boolean }) => {
     const projectDir = process.cwd();
     const registry = await readRegistry(projectDir);
 
+    if (opts.all) {
+      const globalRegistry = await readGlobalRegistry();
+      if (globalRegistry.skills.length === 0) {
+        console.log(chalk.dim("No skills in the global Cowboy library."));
+        return;
+      }
+
+      for (const skill of globalRegistry.skills) {
+        const projectSkill = registry.skills.find((entry) => entry.name === skill.name);
+        const status = projectSkill
+          ? formatProjectSkillStatus(projectSkill)
+          : chalk.dim("not added");
+        console.log(`  ${chalk.bold(skill.name)}  ${formatSkillType(skill)}  [${status}]`);
+        printSkillSourceDetails(skill);
+      }
+
+      console.log(`\n${globalRegistry.skills.length} skill(s) in the global library.`);
+      return;
+    }
+
     if (registry.skills.length === 0) {
-      console.log(chalk.dim("No skills installed."));
+      console.log(chalk.dim("No skills added to this project."));
       return;
     }
 
     for (const skill of registry.skills) {
-      const disabledSet = new Set(skill.disabled_for);
-      const agents = skill.installed_for
-        .map((a) => disabledSet.has(a) ? chalk.dim(`${a} (off)`) : chalk.cyan(a))
-        .join(", ");
-      let type: string;
-      if (skill.type === "imported" && skill.source_repo === "builtin") {
-        type = chalk.green("builtin");
-      } else if (skill.type === "imported") {
-        type = chalk.blue("imported");
-      } else {
-        type = chalk.magenta("generated");
-      }
-
-      console.log(`  ${chalk.bold(skill.name)}  ${type}  [${agents}]`);
-
-      if (skill.type === "imported" && skill.source_repo !== "builtin") {
-        console.log(`    ${chalk.dim(skill.source_repo)}`);
-      } else if (skill.type === "generated") {
-        const sources = skill.sources ?? [];
-        if (sources.length > 1) {
-          console.log(`    ${chalk.dim(`${sources.length} repos`)}`);
-        } else if (sources.length === 1) {
-          console.log(`    ${chalk.dim(sources[0].repo)}`);
-        } else if (skill.research_query) {
-          console.log(`    ${chalk.dim(skill.research_query)}`);
-        } else {
-          console.log(`    ${chalk.dim("generated")}`);
-        }
-        if (skill.doc_urls?.length) {
-          console.log(`    ${chalk.dim(`docs: ${skill.doc_urls.join(", ")}`)}`);
-        }
-      }
+      console.log(
+        `  ${chalk.bold(skill.name)}  ${formatSkillType(skill)}  [${formatProjectSkillStatus(skill)}]`,
+      );
+      printSkillSourceDetails(skill);
     }
 
-    console.log(`\n${registry.skills.length} skill(s) installed.`);
+    console.log(`\n${registry.skills.length} skill(s) added to this project.`);
+  });
+
+// --- cowboy add <name> ---
+
+program
+  .command("add <name>")
+  .description("Add an existing global skill to the current project")
+  .option(
+    "--install-for <agent>",
+    "Install for a specific agent (repeatable, supports comma-separated values)",
+    (value: string, acc: string[]) => [...acc, value],
+    [] as string[],
+  )
+  .action(async (name: string, opts: { installFor: string[] }) => {
+    const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
+
+    let agents: AgentType[];
+    try {
+      agents = await resolveInstallAgents(projectDir, opts.installFor);
+    } catch (error: any) {
+      console.log(chalk.yellow(error.message));
+      return;
+    }
+
+    try {
+      const results = await addGlobalSkillToProject(name, projectDir, agents);
+      const agentNames = results.map((result) => result.agent).join(", ");
+      console.log(`${chalk.green("✓")} Added ${chalk.bold(name)} → ${chalk.dim(agentNames)}`);
+    } catch (error: any) {
+      console.log(chalk.red(error.message));
+    }
   });
 
 // --- cowboy remove <name> ---
 
 program
   .command("remove <name>")
-  .description("Remove an installed skill")
-  .action(async (name: string) => {
+  .description("Remove a skill from the project or the global library")
+  .option("--global", "Remove the skill from the global Cowboy library")
+  .option("--force", "Force global removal even if the skill is linked in other projects")
+  .action(async (name: string, opts: { global?: boolean; force?: boolean }) => {
     const projectDir = process.cwd();
-    const removed = await uninstallSkill(name, projectDir);
+    await migrateProjectIfNeeded(projectDir);
 
-    if (removed) {
-      console.log(`${chalk.green("✓")} Removed ${chalk.bold(name)}`);
-    } else {
-      console.log(chalk.yellow(`Skill "${name}" not found.`));
+    if (opts.global) {
+      try {
+        await removeGlobalSkill(name, { force: opts.force });
+        console.log(`${chalk.green("✓")} Removed ${chalk.bold(name)} from the global library`);
+      } catch (error: any) {
+        console.log(chalk.red(error.message));
+      }
+      return;
     }
+
+    const removed = await uninstallSkill(name, projectDir);
+    if (!removed) {
+      console.log(chalk.yellow(`Skill "${name}" not found in this project.`));
+      return;
+    }
+
+    console.log(`${chalk.green("✓")} Removed ${chalk.bold(name)} from this project`);
   });
 
 // --- cowboy enable <name> ---
@@ -316,6 +359,7 @@ program
   .option("--agent <type>", "Enable only for a specific agent (claude or codex)")
   .action(async (name: string, opts: { agent?: string }) => {
     const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
     const agent = opts.agent as AgentType | undefined;
 
     try {
@@ -340,6 +384,7 @@ program
   .option("--agent <type>", "Disable only for a specific agent (claude or codex)")
   .action(async (name: string, opts: { agent?: string }) => {
     const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
     const agent = opts.agent as AgentType | undefined;
 
     const result = await disableSkill(name, projectDir, agent);
@@ -391,6 +436,7 @@ program
   )
   .action(async (topicParts: string[] | undefined, opts: { repo: string[]; docs: string[]; name?: string; agent?: string; claudeModel?: string; effort?: string; installFor: string[] }) => {
     const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
     const topic = (topicParts ?? []).join(" ").trim() || undefined;
     const repos = opts.repo;
     let docs = opts.docs;
@@ -442,10 +488,12 @@ program
       return;
     }
 
-    try {
-      await ensureBuiltinSkillInstalled(projectDir, aiAgent, "skill-creator");
-    } catch (err: any) {
-      console.log(chalk.red(`Failed to prepare skill-creator: ${err.message}`));
+    if (opts.name && await findGlobalSkill(opts.name)) {
+      console.log(
+        chalk.red(
+          `Skill "${opts.name}" already exists in the global library. Use "cowboy add ${opts.name}" or "cowboy update ${opts.name}".`,
+        ),
+      );
       return;
     }
 
@@ -487,6 +535,12 @@ program
         onProgress: (msg) => console.log(chalk.dim(msg)),
       });
 
+      if (await findGlobalSkill(skill.name)) {
+        throw new Error(
+          `Skill "${skill.name}" already exists in the global library. Use "cowboy add ${skill.name}" or "cowboy update ${skill.name}".`,
+        );
+      }
+
       const results = await installGeneratedSkill({
         skill,
         projectDir,
@@ -516,6 +570,7 @@ program
   .option("--effort <level>", "Reasoning/thinking effort override for updates")
   .action(async (name: string | undefined, opts: { agent?: string; claudeModel?: string; effort?: string }) => {
     const projectDir = process.cwd();
+    await migrateProjectIfNeeded(projectDir);
     const registry = await readRegistry(projectDir);
 
     if (registry.skills.length === 0) {
@@ -654,38 +709,6 @@ async function resolveGenerateAgent(
   });
 }
 
-async function ensureBuiltinSkillInstalled(
-  projectDir: string,
-  agent: AgentType,
-  skillName: string,
-): Promise<void> {
-  const skillPath = agent === "claude"
-    ? join(projectDir, ".claude", "skills", skillName, "SKILL.md")
-    : join(projectDir, ".agents", "skills", skillName, "SKILL.md");
-
-  if (await exists(skillPath)) {
-    return;
-  }
-
-  const builtins = await loadBuiltinSkills();
-  const skill = builtins.find((entry) => entry.name === skillName);
-  if (!skill) {
-    throw new Error(`Built-in skill "${skillName}" not found.`);
-  }
-
-  const existing = await findSkill(projectDir, skillName);
-  const agents = existing
-    ? Array.from(new Set([...existing.installed_for, agent]))
-    : [agent];
-
-  await installSkill({
-    skill,
-    projectDir,
-    agents,
-    sourceRepo: "builtin",
-  });
-}
-
 function getAgentInstallHint(agent: AIAgent): string {
   return agent === "claude" ? "Claude Code (claude)" : "Codex (codex)";
 }
@@ -706,11 +729,56 @@ function formatAgentLabel(agent: AgentType): string {
   return agent === "claude" ? "Claude Code" : "Codex";
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
+function formatSkillType(skill: { type: "imported" | "generated"; source_repo?: string }): string {
+  if (skill.type === "imported" && skill.source_repo === "builtin") {
+    return chalk.green("builtin");
+  }
+
+  if (skill.type === "imported") {
+    return chalk.blue("imported");
+  }
+
+  return chalk.magenta("generated");
+}
+
+function formatProjectSkillStatus(skill: {
+  installed_for: AgentType[];
+  disabled_for: AgentType[];
+}): string {
+  const disabled = new Set(skill.disabled_for);
+  return skill.installed_for
+    .map((agent) => disabled.has(agent) ? chalk.dim(`${agent} (off)`) : chalk.cyan(agent))
+    .join(", ");
+}
+
+function printSkillSourceDetails(skill: {
+  type: "imported" | "generated";
+  source_repo?: string;
+  sources?: Array<{ repo: string }>;
+  research_query?: string;
+  doc_urls?: string[];
+}): void {
+  if (skill.type === "imported" && skill.source_repo && skill.source_repo !== "builtin") {
+    console.log(`    ${chalk.dim(skill.source_repo)}`);
+    return;
+  }
+
+  if (skill.type !== "generated") {
+    return;
+  }
+
+  const sources = skill.sources ?? [];
+  if (sources.length > 1) {
+    console.log(`    ${chalk.dim(`${sources.length} repos`)}`);
+  } else if (sources.length === 1) {
+    console.log(`    ${chalk.dim(sources[0].repo)}`);
+  } else if (skill.research_query) {
+    console.log(`    ${chalk.dim(skill.research_query)}`);
+  } else {
+    console.log(`    ${chalk.dim("generated")}`);
+  }
+
+  if (skill.doc_urls?.length) {
+    console.log(`    ${chalk.dim(`docs: ${skill.doc_urls.join(", ")}`)}`);
   }
 }
